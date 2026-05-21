@@ -31,6 +31,14 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
+      - name: Install cargo-edit
+        run: cargo install cargo-edit --locked
+
+      - name: Set version from tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          cargo set-version "${VERSION#v}"
+
       - name: Install cross
         if: matrix.use_cross == true
         run: cargo install cross --locked
