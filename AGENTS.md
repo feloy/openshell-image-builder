@@ -8,6 +8,8 @@ The version in `Cargo.toml` follows `x.y.z-next` on the `main` branch (e.g. `0.1
 
 ## Before committing
 
+Run `/copyright-headers` to ensure all source files have Apache 2.0 license headers.
+
 Always run the full check suite locally before staging:
 
 ```bash
