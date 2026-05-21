@@ -14,6 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod agent;
 mod build;
 mod config;
 mod containerfile;
@@ -44,6 +45,8 @@ struct Cli {
         help = "Increase log verbosity (-v info, -vv debug)"
     )]
     verbose: u8,
+    #[arg(long, value_enum, help = "Agent to install in the image")]
+    agent: Option<agent::AgentKind>,
 }
 
 fn main() {
@@ -60,7 +63,8 @@ fn main() {
         eprintln!("Error reading config file: {e}");
         std::process::exit(1);
     });
-    let output = containerfile::generate(&config).unwrap_or_else(|e| {
+    let agent = cli.agent.map(agent::from_kind);
+    let output = containerfile::generate(&config, agent.as_deref()).unwrap_or_else(|e| {
         eprintln!("Error generating Containerfile: {e}");
         std::process::exit(1);
     });
