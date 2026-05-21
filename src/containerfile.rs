@@ -14,6 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::agent::Agent;
 use crate::config::Config;
 
 #[derive(Debug, PartialEq)]
@@ -33,17 +34,20 @@ impl std::fmt::Display for ContainerfileError {
 
 impl std::error::Error for ContainerfileError {}
 
-pub fn generate(config: &Config) -> Result<String, ContainerfileError> {
+pub fn generate(config: &Config, agent: Option<&dyn Agent>) -> Result<String, ContainerfileError> {
     match config.base_image.image.as_str() {
-        "ubuntu" => Ok(ubuntu(config)),
+        "ubuntu" => Ok(ubuntu(config, agent)),
         image => Err(ContainerfileError::NotSupported {
             image: image.to_string(),
         }),
     }
 }
 
-fn ubuntu(config: &Config) -> String {
+fn ubuntu(config: &Config, agent: Option<&dyn Agent>) -> String {
     let tag = &config.base_image.tag;
+    let agent_section = agent
+        .map(|a| format!("{}\n\n", a.install()))
+        .unwrap_or_default();
     format!(
         r#"# System base
 FROM nvcr.io/nvidia/base/ubuntu:{tag} AS system
@@ -76,7 +80,7 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
 # Final base image
 FROM system AS final
 
-RUN printf 'export PATH="/usr/local/bin:/usr/bin:/bin"\nexport PS1="\\u@\\h:\\w\\$ "\n' \
+RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
         > /sandbox/.bashrc && \
     printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
     chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
@@ -84,7 +88,7 @@ RUN printf 'export PATH="/usr/local/bin:/usr/bin:/bin"\nexport PS1="\\u@\\h:\\w\
 
 USER sandbox
 
-ENTRYPOINT ["/bin/bash"]
+{agent_section}ENTRYPOINT ["/bin/bash"]
 "#
     )
 }
@@ -92,6 +96,7 @@ ENTRYPOINT ["/bin/bash"]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Agent;
     use crate::config::{BaseImageConfig, Config};
 
     fn ubuntu_config(tag: &str) -> Config {
@@ -114,29 +119,60 @@ mod tests {
         }
     }
 
+    struct MockAgent;
+
+    impl Agent for MockAgent {
+        fn install(&self) -> String {
+            "RUN echo mock-agent".to_string()
+        }
+    }
+
     #[test]
     fn ubuntu_generates_successfully() {
         let config = ubuntu_config("noble-20251013");
-        assert!(generate(&config).is_ok());
+        assert!(generate(&config, None).is_ok());
     }
 
     #[test]
     fn ubuntu_containerfile_contains_tag() {
         let config = ubuntu_config("noble-20251013");
-        let content = generate(&config).unwrap();
+        let content = generate(&config, None).unwrap();
         assert!(content.contains("FROM nvcr.io/nvidia/base/ubuntu:noble-20251013 AS system"));
     }
 
     #[test]
     fn ubuntu_containerfile_tag_is_substituted() {
-        let content = generate(&ubuntu_config("24.04")).unwrap();
+        let content = generate(&ubuntu_config("24.04"), None).unwrap();
         assert!(content.contains("FROM nvcr.io/nvidia/base/ubuntu:24.04 AS system"));
         assert!(!content.contains("{tag}"));
     }
 
     #[test]
+    fn ubuntu_with_agent_includes_install() {
+        let content = generate(&ubuntu_config("noble-20251013"), Some(&MockAgent)).unwrap();
+        assert!(content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn ubuntu_agent_install_runs_as_sandbox_user() {
+        let content = generate(&ubuntu_config("noble-20251013"), Some(&MockAgent)).unwrap();
+        let user_pos = content.find("USER sandbox").unwrap();
+        let install_pos = content.find("RUN echo mock-agent").unwrap();
+        assert!(
+            install_pos > user_pos,
+            "agent install must appear after USER sandbox"
+        );
+    }
+
+    #[test]
+    fn ubuntu_without_agent_omits_install() {
+        let content = generate(&ubuntu_config("noble-20251013"), None).unwrap();
+        assert!(!content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
     fn fedora_returns_not_supported() {
-        let err = generate(&fedora_config()).unwrap_err();
+        let err = generate(&fedora_config(), None).unwrap_err();
         assert_eq!(
             err,
             ContainerfileError::NotSupported {
@@ -162,7 +198,7 @@ mod tests {
                 tag: "latest".to_string(),
             },
         };
-        let err = generate(&config).unwrap_err();
+        let err = generate(&config, None).unwrap_err();
         assert_eq!(
             err,
             ContainerfileError::NotSupported {

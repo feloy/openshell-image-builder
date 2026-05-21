@@ -14,6 +14,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | --- | --- |
 | `<TAG>` | Tag for the built image (e.g. `myimage:latest`) |
 | `--config <CONFIG>` | Path to config file (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
+| `--agent <AGENT>` | Agent to install in the image (possible values: `claude`) |
 | `-v` / `-vv` | Increase log verbosity (info / debug) |
 
 ## Configuration
@@ -68,4 +69,10 @@ Enable verbose logging to trace which config file is loaded:
 
 ```sh
 openshell-image-builder -v myimage:latest
+```
+
+Install the Claude agent in the image:
+
+```sh
+openshell-image-builder --agent claude myimage:latest
 ```
