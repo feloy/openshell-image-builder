@@ -36,6 +36,7 @@ impl std::error::Error for ContainerfileError {}
 
 pub fn generate(config: &Config, agent: Option<&dyn Agent>) -> Result<String, ContainerfileError> {
     match config.base_image.image.as_str() {
+        "fedora" => Ok(fedora(config, agent)),
         "ubuntu" => Ok(ubuntu(config, agent)),
         image => Err(ContainerfileError::NotSupported {
             image: image.to_string(),
@@ -73,6 +74,56 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         procps \
         traceroute \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
+    groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox
+
+# Final base image
+FROM system AS final
+
+RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
+        > /sandbox/.bashrc && \
+    printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
+    chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
+    chown -R sandbox:sandbox /sandbox
+
+USER sandbox
+
+{agent_section}ENTRYPOINT ["/bin/bash"]
+"#
+    )
+}
+
+fn fedora(config: &Config, agent: Option<&dyn Agent>) -> String {
+    let tag = &config.base_image.tag;
+    let agent_section = agent
+        .map(|a| format!("{}\n\n", a.install()))
+        .unwrap_or_default();
+    format!(
+        r#"# System base
+FROM registry.fedoraproject.org/fedora:{tag} AS system
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /sandbox
+
+# Core system dependencies
+RUN dnf install -y --setopt=install_weak_deps=False \
+        bind-utils \
+        ca-certificates \
+        curl \
+        iproute \
+        iptables \
+        iputils \
+        net-tools \
+        nftables \
+        nmap-ncat \
+        openssh-server \
+        procps-ng \
+        traceroute \
+        which \
+    && dnf clean all
 
 RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supervisor && \
     groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox
@@ -171,22 +222,51 @@ mod tests {
     }
 
     #[test]
-    fn fedora_returns_not_supported() {
-        let err = generate(&fedora_config(), None).unwrap_err();
-        assert_eq!(
-            err,
-            ContainerfileError::NotSupported {
-                image: "fedora".to_string()
-            }
+    fn fedora_generates_successfully() {
+        assert!(generate(&fedora_config(), None).is_ok());
+    }
+
+    #[test]
+    fn fedora_containerfile_contains_tag() {
+        let content = generate(&fedora_config(), None).unwrap();
+        assert!(content.contains("FROM registry.fedoraproject.org/fedora:latest AS system"));
+    }
+
+    #[test]
+    fn fedora_containerfile_tag_is_substituted() {
+        let content = generate(&fedora_config(), None).unwrap();
+        assert!(!content.contains("{tag}"));
+    }
+
+    #[test]
+    fn fedora_with_agent_includes_install() {
+        let content = generate(&fedora_config(), Some(&MockAgent)).unwrap();
+        assert!(content.contains("RUN echo mock-agent"));
+    }
+
+    #[test]
+    fn fedora_agent_install_runs_as_sandbox_user() {
+        let content = generate(&fedora_config(), Some(&MockAgent)).unwrap();
+        let user_pos = content.find("USER sandbox").unwrap();
+        let install_pos = content.find("RUN echo mock-agent").unwrap();
+        assert!(
+            install_pos > user_pos,
+            "agent install must appear after USER sandbox"
         );
+    }
+
+    #[test]
+    fn fedora_without_agent_omits_install() {
+        let content = generate(&fedora_config(), None).unwrap();
+        assert!(!content.contains("RUN echo mock-agent"));
     }
 
     #[test]
     fn not_supported_error_message() {
         let err = ContainerfileError::NotSupported {
-            image: "fedora".to_string(),
+            image: "centos".to_string(),
         };
-        assert_eq!(err.to_string(), "base image 'fedora' is not supported");
+        assert_eq!(err.to_string(), "base image 'centos' is not supported");
     }
 
     #[test]
