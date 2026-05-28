@@ -23,6 +23,8 @@ mod workspace;
 
 use std::path::PathBuf;
 
+const BASE_POLICY_YAML: &str = include_str!("../assets/policy.yaml");
+
 use clap::Parser;
 use log::LevelFilter;
 
@@ -81,6 +83,11 @@ fn main() {
         eprintln!("Error staging features: {e}");
         std::process::exit(1);
     });
+    let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref());
+    std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml).unwrap_or_else(|e| {
+        eprintln!("Error writing policy.yaml to build context: {e}");
+        std::process::exit(1);
+    });
     let output =
         containerfile::generate(&config, agent.as_deref(), &features).unwrap_or_else(|e| {
             eprintln!("Error generating Containerfile: {e}");
@@ -92,6 +99,30 @@ fn main() {
     });
 }
 
+fn build_policy(base_yaml: &str, agent: Option<&dyn agent::Agent>) -> String {
+    let mut policy = openshell_policy::parse_sandbox_policy(base_yaml).unwrap_or_else(|e| {
+        eprintln!("Error parsing base policy.yaml: {e}");
+        std::process::exit(1);
+    });
+    if let Some(agent) = agent {
+        let agent_yaml = agent.policy_yaml();
+        if !agent_yaml.is_empty() {
+            let agent_policy =
+                openshell_policy::parse_sandbox_policy(agent_yaml).unwrap_or_else(|e| {
+                    eprintln!("Error parsing agent policy: {e}");
+                    std::process::exit(1);
+                });
+            policy
+                .network_policies
+                .extend(agent_policy.network_policies);
+        }
+    }
+    openshell_policy::serialize_sandbox_policy(&policy).unwrap_or_else(|e| {
+        eprintln!("Error serializing policy.yaml: {e}");
+        std::process::exit(1);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +132,17 @@ mod tests {
     fn version_matches_cargo_toml() {
         let cmd = Cli::command();
         assert_eq!(cmd.get_version(), Some(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn build_policy_without_agent_has_no_claude_code_rule() {
+        let yaml = build_policy(BASE_POLICY_YAML, None);
+        assert!(!yaml.contains("api.anthropic.com"));
+    }
+
+    #[test]
+    fn build_policy_with_claude_agent_includes_claude_code_rule() {
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent));
+        assert!(yaml.contains("api.anthropic.com"));
     }
 }

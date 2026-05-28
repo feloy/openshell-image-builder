@@ -21,6 +21,7 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
+openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.0.50" }
 dirs = "5"
 env_logger = "0.11"
 flate2 = "1"

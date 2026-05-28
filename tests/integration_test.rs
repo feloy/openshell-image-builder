@@ -174,6 +174,14 @@ fn check_bash_entrypoint(image: &str) {
     );
 }
 
+fn check_policy_yaml(image: &str) {
+    let out = run_in_image(image, "test -f /etc/openshell/policy.yaml");
+    assert!(
+        out.status.success(),
+        "policy.yaml not found in /etc/openshell/"
+    );
+}
+
 fn check_claude_in_path(image: &str, expected: bool) {
     let out = run_in_image(image, "which claude");
     if expected {
@@ -189,6 +197,23 @@ fn check_opencode_in_path(image: &str, expected: bool) {
         assert!(out.status.success(), "opencode not found in PATH");
     } else {
         assert!(!out.status.success(), "opencode should not be in PATH");
+    }
+}
+
+fn check_claude_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("api.anthropic.com"),
+            "claude_code policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("api.anthropic.com"),
+            "claude_code policy rule should not be present in policy.yaml"
+        );
     }
 }
 
@@ -229,6 +254,18 @@ macro_rules! image_tests {
             #[ignore]
             fn opencode_in_path() {
                 check_opencode_in_path($image_fn(), $has_opencode);
+            }
+
+            #[test]
+            #[ignore]
+            fn policy_yaml_present() {
+                check_policy_yaml($image_fn());
+            }
+
+            #[test]
+            #[ignore]
+            fn policy_has_claude_rules() {
+                check_claude_policy($image_fn(), $has_claude);
             }
         }
     };

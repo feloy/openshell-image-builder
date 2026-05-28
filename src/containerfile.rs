@@ -146,7 +146,9 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
 # Final base image
 FROM system AS final
 
-{features_section}RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
+{features_section}COPY policy.yaml /etc/openshell/policy.yaml
+
+RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
         > /sandbox/.bashrc && \
     printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
     chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
@@ -197,7 +199,9 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
 # Final base image
 FROM system AS final
 
-{features_section}RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
+{features_section}COPY policy.yaml /etc/openshell/policy.yaml
+
+RUN printf 'export PS1="\\u@\\h:\\w\\$ "\n' \
         > /sandbox/.bashrc && \
     printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /sandbox/.profile && \
     chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile && \
@@ -435,5 +439,30 @@ mod tests {
         assert!(!with_empty.contains("# Feature:"));
         assert!(!with_empty.contains("_REMOTE_USER"));
         assert!(!with_empty.contains("rm -rf /tmp/feature-install"));
+    }
+
+    #[test]
+    fn ubuntu_copies_policy_yaml() {
+        let content = generate(&ubuntu_config("24.04"), None, &[]).unwrap();
+        assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
+    }
+
+    #[test]
+    fn fedora_copies_policy_yaml() {
+        let content = generate(&fedora_config(), None, &[]).unwrap();
+        assert!(content.contains("COPY policy.yaml /etc/openshell/policy.yaml"));
+    }
+
+    #[test]
+    fn policy_copy_appears_before_user_sandbox() {
+        let content = generate(&ubuntu_config("24.04"), None, &[]).unwrap();
+        let copy_pos = content
+            .find("COPY policy.yaml /etc/openshell/policy.yaml")
+            .unwrap();
+        let user_pos = content.find("USER sandbox").unwrap();
+        assert!(
+            copy_pos < user_pos,
+            "policy.yaml COPY must appear before USER sandbox"
+        );
     }
 }

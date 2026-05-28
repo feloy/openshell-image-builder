@@ -17,10 +17,16 @@
 mod claude;
 mod opencode;
 
+#[cfg(test)]
+pub use claude::ClaudeAgent;
+
 use clap::ValueEnum;
 
 pub trait Agent {
     fn install(&self) -> String;
+    fn policy_yaml(&self) -> &str {
+        ""
+    }
 }
 
 #[derive(Clone, ValueEnum)]

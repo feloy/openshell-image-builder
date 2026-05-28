@@ -23,6 +23,23 @@ impl Agent for ClaudeAgent {
         "RUN curl -fsSL https://claude.ai/install.sh | bash\nENV PATH=/sandbox/.local/bin:$PATH"
             .to_string()
     }
+
+    fn policy_yaml(&self) -> &str {
+        r#"version: 1
+network_policies:
+  claude_code:
+    name: claude-code
+    endpoints:
+      - { host: api.anthropic.com, port: 443, protocol: rest, enforcement: enforce, access: full, tls: terminate }
+      - { host: statsig.anthropic.com, port: 443 }
+      - { host: sentry.io, port: 443 }
+      - { host: raw.githubusercontent.com, port: 443 }
+      - { host: platform.claude.com, port: 443 }
+      - { host: api.github.com, port: 443, protocol: rest, tls: terminate, enforcement: enforce, access: read-only }
+    binaries:
+      - { path: /sandbox/.local/bin/claude }
+"#
+    }
 }
 
 #[cfg(test)]

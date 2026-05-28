@@ -86,6 +86,15 @@ openshell-image-builder --agent claude myimage:latest
 openshell-image-builder --agent opencode myimage:latest
 ```
 
+## Sandbox policy
+
+Every image built by this tool includes `/etc/openshell/policy.yaml`. This file is read by the OpenShell runtime and defines the sandbox security policy for the container:
+
+- **Filesystem policy** — which paths are read-only, read-write, or inaccessible to the `sandbox` user.
+- **Network policies** — which binaries are allowed to connect to which hosts and ports.
+
+The base policy ([`assets/policy.yaml`](assets/policy.yaml)) covers general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`. When `--agent` is passed, the agent's own network policy is merged on top — for example, `--agent claude` adds a `claude_code` policy that allows Claude Code to reach the Anthropic API and GitHub REST API.
+
 ## Dev Container Features
 
 The tool supports [Dev Container Features](https://containers.dev/implementors/features/) declared in `.kaiden/workspace.json` in the current directory.
