@@ -2,7 +2,22 @@
 
 [OpenShell](https://github.com/NVIDIA/OpenShell-Community) is NVIDIA's runtime environment for autonomous AI agents. It provides isolated sandboxes where agents can safely run, iterate, and be verified — without risk to the host system or other workloads.
 
-OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/OpenShell-Community), but they are general-purpose. `openshell-image-builder` lets you build your own: lightweight, workspace-specific images that contain only what you need. You pick the base OS, declare which [Dev Container Features](https://containers.dev/implementors/features/) to install via your Kaiden workspace configuration, and optionally pre-install an AI agent such as Claude Code — all without writing a Containerfile by hand.
+OpenShell ships a set of [pre-built sandbox images](https://github.com/NVIDIA/OpenShell-Community), but they are general-purpose. `openshell-image-builder` lets you build your own: lightweight, workspace-specific images that contain only what you need — without writing a Containerfile by hand.
+
+- **Base image selection** — Ubuntu or Fedora, any tag.
+- **Agent installation and configuration** — pre-installed in `PATH` with scoped network access to agent-specific endpoints.
+- **Inference configuration** — scoped network access to LLM backends.
+- **Dev Container Features** — install toolchains and utilities declared in your Kaiden workspace configuration.
+- **Sandbox policy** — every image ships `/etc/openshell/policy.yaml`, built from a base policy merged with inference and agent rules.
+
+Supported agents:
+
+- [Claude Code](https://claude.ai/code) (`--agent claude`)
+- [OpenCode](https://opencode.ai) (`--agent opencode`)
+
+Supported inference providers:
+
+- [Anthropic](https://www.anthropic.com) (`--inference anthropic`)
 
 ## Quick start
 
