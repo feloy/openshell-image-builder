@@ -206,13 +206,30 @@ fn check_claude_policy(image: &str, expected: bool) {
     let policy = String::from_utf8_lossy(&out.stdout);
     if expected {
         assert!(
-            policy.contains("api.anthropic.com"),
+            policy.contains("name: claude-code"),
             "claude_code policy rule not found in policy.yaml"
         );
     } else {
         assert!(
-            !policy.contains("api.anthropic.com"),
+            !policy.contains("name: claude-code"),
             "claude_code policy rule should not be present in policy.yaml"
+        );
+    }
+}
+
+fn check_opencode_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("name: opencode"),
+            "opencode policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("name: opencode"),
+            "opencode policy rule should not be present in policy.yaml"
         );
     }
 }
@@ -266,6 +283,12 @@ macro_rules! image_tests {
             #[ignore]
             fn policy_has_claude_rules() {
                 check_claude_policy($image_fn(), $has_claude);
+            }
+
+            #[test]
+            #[ignore]
+            fn policy_has_opencode_rules() {
+                check_opencode_policy($image_fn(), $has_opencode);
             }
         }
     };
