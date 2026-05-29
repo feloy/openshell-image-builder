@@ -24,6 +24,7 @@ use clap::ValueEnum;
 
 pub trait Agent {
     fn install(&self) -> String;
+    fn binary_path(&self) -> &str;
     fn policy_yaml(&self) -> &str {
         ""
     }

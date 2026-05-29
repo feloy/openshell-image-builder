@@ -246,6 +246,10 @@ mod tests {
         fn install(&self) -> String {
             "RUN echo mock-agent".to_string()
         }
+
+        fn binary_path(&self) -> &str {
+            "/sandbox/.local/bin/mock-agent"
+        }
     }
 
     fn mock_feature(id: &str, dir_name: &str) -> StagedFeature {

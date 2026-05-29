@@ -19,6 +19,7 @@ mod build;
 mod config;
 mod containerfile;
 mod feature;
+mod inference;
 mod workspace;
 
 use std::path::PathBuf;
@@ -51,6 +52,8 @@ struct Cli {
     verbose: u8,
     #[arg(long, value_enum, help = "Agent to install in the image")]
     agent: Option<agent::AgentKind>,
+    #[arg(long, value_enum, help = "Inference server the agent will connect to")]
+    inference: Option<inference::InferenceKind>,
 }
 
 fn main() {
@@ -72,6 +75,7 @@ fn main() {
         std::process::exit(1);
     });
     let agent = cli.agent.map(agent::from_kind);
+    let inference = cli.inference.map(inference::from_kind);
     let context_dir = tempfile::Builder::new()
         .prefix("openshell-image-builder")
         .tempdir()
@@ -83,7 +87,7 @@ fn main() {
         eprintln!("Error staging features: {e}");
         std::process::exit(1);
     });
-    let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref());
+    let policy_yaml = build_policy(BASE_POLICY_YAML, agent.as_deref(), inference.as_deref());
     std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml).unwrap_or_else(|e| {
         eprintln!("Error writing policy.yaml to build context: {e}");
         std::process::exit(1);
@@ -99,11 +103,26 @@ fn main() {
     });
 }
 
-fn build_policy(base_yaml: &str, agent: Option<&dyn agent::Agent>) -> String {
+fn build_policy(
+    base_yaml: &str,
+    agent: Option<&dyn agent::Agent>,
+    inference: Option<&dyn inference::Inference>,
+) -> String {
     let mut policy = openshell_policy::parse_sandbox_policy(base_yaml).unwrap_or_else(|e| {
         eprintln!("Error parsing base policy.yaml: {e}");
         std::process::exit(1);
     });
+    if let (Some(inference), Some(agent)) = (inference, agent) {
+        let inference_yaml = inference.policy_yaml(agent.binary_path());
+        let inference_policy = openshell_policy::parse_sandbox_policy(&inference_yaml)
+            .unwrap_or_else(|e| {
+                eprintln!("Error parsing inference policy: {e}");
+                std::process::exit(1);
+            });
+        policy
+            .network_policies
+            .extend(inference_policy.network_policies);
+    }
     if let Some(agent) = agent {
         let agent_yaml = agent.policy_yaml();
         if !agent_yaml.is_empty() {
@@ -136,13 +155,39 @@ mod tests {
 
     #[test]
     fn build_policy_without_agent_has_no_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, None);
-        assert!(!yaml.contains("api.anthropic.com"));
+        let yaml = build_policy(BASE_POLICY_YAML, None, None);
+        assert!(!yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_with_claude_agent_includes_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent));
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None);
+        assert!(yaml.contains("name: claude-code"));
+    }
+
+    #[test]
+    fn build_policy_without_inference_has_no_anthropic_rule() {
+        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None);
+        assert!(!yaml.contains("api.anthropic.com"));
+    }
+
+    #[test]
+    fn build_policy_with_inference_includes_anthropic_rule() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            Some(&inference::AnthropicInference),
+        );
         assert!(yaml.contains("api.anthropic.com"));
+    }
+
+    #[test]
+    fn build_policy_with_inference_uses_agent_binary() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            Some(&inference::AnthropicInference),
+        );
+        assert!(yaml.contains("/sandbox/.local/bin/claude"));
     }
 }

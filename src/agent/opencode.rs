@@ -30,6 +30,10 @@ impl Agent for OpencodeAgent {
             .to_string()
     }
 
+    fn binary_path(&self) -> &str {
+        "/sandbox/.local/bin/opencode"
+    }
+
     fn policy_yaml(&self) -> &str {
         r#"version: 1
 network_policies:
@@ -37,7 +41,6 @@ network_policies:
     name: opencode
     endpoints:
       - { host: models.dev, port: 443, protocol: rest, enforcement: enforce, access: full, tls: terminate }
-      - { host: api.anthropic.com, port: 443, protocol: rest, enforcement: enforce, access: full, tls: terminate }
       - { host: opencode.ai, port: 443, protocol: rest, enforcement: enforce, access: full, tls: terminate }
       - { host: registry.npmjs.org, port: 443, protocol: rest, enforcement: enforce, access: read-only, tls: terminate }
       - { host: api.github.com, port: 443, protocol: rest, tls: terminate, enforcement: enforce, access: read-only }
@@ -81,6 +84,11 @@ mod tests {
                 .install()
                 .contains("ENV PATH=/sandbox/.local/bin:$PATH")
         );
+    }
+
+    #[test]
+    fn binary_path_is_local_bin_opencode() {
+        assert_eq!(OpencodeAgent.binary_path(), "/sandbox/.local/bin/opencode");
     }
 
     #[test]
