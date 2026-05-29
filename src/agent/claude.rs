@@ -23,6 +23,24 @@ impl Agent for ClaudeAgent {
         "RUN curl -fsSL https://claude.ai/install.sh | bash\nENV PATH=/sandbox/.local/bin:$PATH"
             .to_string()
     }
+
+    fn binary_path(&self) -> &str {
+        "/sandbox/.local/bin/claude"
+    }
+
+    fn policy_yaml(&self) -> &str {
+        r#"version: 1
+network_policies:
+  claude_code:
+    name: claude-code
+    endpoints:
+      - { host: raw.githubusercontent.com, port: 443 }
+      - { host: platform.claude.com, port: 443 }
+      - { host: api.github.com, port: 443, protocol: rest, tls: terminate, enforcement: enforce, access: read-only }
+    binaries:
+      - { path: /sandbox/.local/bin/claude }
+"#
+    }
 }
 
 #[cfg(test)]
@@ -50,5 +68,20 @@ mod tests {
                 .install()
                 .contains("ENV PATH=/sandbox/.local/bin:$PATH")
         );
+    }
+
+    #[test]
+    fn binary_path_is_local_bin_claude() {
+        assert_eq!(ClaudeAgent.binary_path(), "/sandbox/.local/bin/claude");
+    }
+
+    #[test]
+    fn policy_yaml_has_claude_code_name() {
+        assert!(ClaudeAgent.policy_yaml().contains("name: claude-code"));
+    }
+
+    #[test]
+    fn policy_yaml_has_platform_claude_endpoint() {
+        assert!(ClaudeAgent.policy_yaml().contains("platform.claude.com"));
     }
 }

@@ -29,6 +29,25 @@ impl Agent for OpencodeAgent {
          ENV PATH=/sandbox/.local/bin:$PATH"
             .to_string()
     }
+
+    fn binary_path(&self) -> &str {
+        "/sandbox/.local/bin/opencode"
+    }
+
+    fn policy_yaml(&self) -> &str {
+        r#"version: 1
+network_policies:
+  opencode:
+    name: opencode
+    endpoints:
+      - { host: models.dev, port: 443, protocol: rest, enforcement: enforce, access: full, tls: terminate }
+      - { host: opencode.ai, port: 443, protocol: rest, enforcement: enforce, access: full, tls: terminate }
+      - { host: registry.npmjs.org, port: 443, protocol: rest, enforcement: enforce, access: read-only, tls: terminate }
+      - { host: api.github.com, port: 443, protocol: rest, tls: terminate, enforcement: enforce, access: read-only }
+    binaries:
+      - { path: /sandbox/.local/bin/opencode }
+"#
+    }
 }
 
 #[cfg(test)]
@@ -64,6 +83,35 @@ mod tests {
             OpencodeAgent
                 .install()
                 .contains("ENV PATH=/sandbox/.local/bin:$PATH")
+        );
+    }
+
+    #[test]
+    fn binary_path_is_local_bin_opencode() {
+        assert_eq!(OpencodeAgent.binary_path(), "/sandbox/.local/bin/opencode");
+    }
+
+    #[test]
+    fn policy_yaml_is_nonempty() {
+        assert!(!OpencodeAgent.policy_yaml().is_empty());
+    }
+
+    #[test]
+    fn policy_yaml_contains_opencode_endpoint() {
+        assert!(OpencodeAgent.policy_yaml().contains("opencode.ai"));
+    }
+
+    #[test]
+    fn policy_yaml_contains_npm_registry() {
+        assert!(OpencodeAgent.policy_yaml().contains("registry.npmjs.org"));
+    }
+
+    #[test]
+    fn policy_yaml_references_opencode_binary() {
+        assert!(
+            OpencodeAgent
+                .policy_yaml()
+                .contains("/sandbox/.local/bin/opencode")
         );
     }
 }

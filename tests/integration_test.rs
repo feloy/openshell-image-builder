@@ -69,7 +69,7 @@ fn ubuntu_claude_image() -> &'static str {
     UBUNTU_CLAUDE_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-claude:integration",
-            &["--agent", "claude"],
+            &["--agent", "claude", "--inference", "anthropic"],
         )
     })
 }
@@ -94,6 +94,8 @@ fn fedora_claude_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--agent",
                 "claude",
+                "--inference",
+                "anthropic",
             ],
         )
     })
@@ -103,7 +105,7 @@ fn ubuntu_opencode_image() -> &'static str {
     UBUNTU_OPENCODE_IMAGE.get_or_init(|| {
         build_image(
             "openshell-test-ubuntu-opencode:integration",
-            &["--agent", "opencode"],
+            &["--agent", "opencode", "--inference", "anthropic"],
         )
     })
 }
@@ -118,6 +120,8 @@ fn fedora_opencode_image() -> &'static str {
                 config.path().to_str().unwrap(),
                 "--agent",
                 "opencode",
+                "--inference",
+                "anthropic",
             ],
         )
     })
@@ -174,6 +178,14 @@ fn check_bash_entrypoint(image: &str) {
     );
 }
 
+fn check_policy_yaml(image: &str) {
+    let out = run_in_image(image, "test -f /etc/openshell/policy.yaml");
+    assert!(
+        out.status.success(),
+        "policy.yaml not found in /etc/openshell/"
+    );
+}
+
 fn check_claude_in_path(image: &str, expected: bool) {
     let out = run_in_image(image, "which claude");
     if expected {
@@ -192,12 +204,63 @@ fn check_opencode_in_path(image: &str, expected: bool) {
     }
 }
 
+fn check_claude_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("name: claude-code"),
+            "claude_code policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("name: claude-code"),
+            "claude_code policy rule should not be present in policy.yaml"
+        );
+    }
+}
+
+fn check_opencode_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("name: opencode"),
+            "opencode policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("name: opencode"),
+            "opencode policy rule should not be present in policy.yaml"
+        );
+    }
+}
+
+fn check_anthropic_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("name: anthropic"),
+            "anthropic inference policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("name: anthropic"),
+            "anthropic inference policy rule should not be present in policy.yaml"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Matrix: base_image × agent — one test module per variant
 // ---------------------------------------------------------------------------
 
 macro_rules! image_tests {
-    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal) => {
+    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal, has_anthropic: $has_anthropic:literal) => {
         mod $mod_name {
             use super::*;
 
@@ -230,16 +293,40 @@ macro_rules! image_tests {
             fn opencode_in_path() {
                 check_opencode_in_path($image_fn(), $has_opencode);
             }
+
+            #[test]
+            #[ignore]
+            fn policy_yaml_present() {
+                check_policy_yaml($image_fn());
+            }
+
+            #[test]
+            #[ignore]
+            fn policy_has_claude_rules() {
+                check_claude_policy($image_fn(), $has_claude);
+            }
+
+            #[test]
+            #[ignore]
+            fn policy_has_opencode_rules() {
+                check_opencode_policy($image_fn(), $has_opencode);
+            }
+
+            #[test]
+            #[ignore]
+            fn policy_has_anthropic_rules() {
+                check_anthropic_policy($image_fn(), $has_anthropic);
+            }
         }
     };
 }
 
-image_tests!(ubuntu,          ubuntu_image,          has_claude: false, has_opencode: false);
-image_tests!(ubuntu_claude,   ubuntu_claude_image,   has_claude: true,  has_opencode: false);
-image_tests!(ubuntu_opencode, ubuntu_opencode_image, has_claude: false, has_opencode: true);
-image_tests!(fedora,          fedora_image,          has_claude: false, has_opencode: false);
-image_tests!(fedora_claude,   fedora_claude_image,   has_claude: true,  has_opencode: false);
-image_tests!(fedora_opencode, fedora_opencode_image, has_claude: false, has_opencode: true);
+image_tests!(ubuntu,          ubuntu_image,          has_claude: false, has_opencode: false, has_anthropic: false);
+image_tests!(ubuntu_claude,   ubuntu_claude_image,   has_claude: true,  has_opencode: false, has_anthropic: true);
+image_tests!(ubuntu_opencode, ubuntu_opencode_image, has_claude: false, has_opencode: true,  has_anthropic: true);
+image_tests!(fedora,          fedora_image,          has_claude: false, has_opencode: false, has_anthropic: false);
+image_tests!(fedora_claude,   fedora_claude_image,   has_claude: true,  has_opencode: false, has_anthropic: true);
+image_tests!(fedora_opencode, fedora_opencode_image, has_claude: false, has_opencode: true,  has_anthropic: true);
 
 // ---------------------------------------------------------------------------
 // Workspace helpers for feature-based builds
