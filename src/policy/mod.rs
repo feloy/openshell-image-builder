@@ -15,9 +15,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Serde types that mirror the OpenShell sandbox policy YAML schema.
-// This is a pure-Rust (no proto / tonic) reimplementation of the YAML layer
-// that was previously provided by the openshell-policy crate.
-// See: https://github.com/NVIDIA/OpenShell/issues/1608
+// Derived from the YAML layer of the openshell-policy crate (Apache-2.0):
+//   https://github.com/NVIDIA/OpenShell/blob/c9056bbc5550a58d70cd652ac53bccf6a0f48a0b/crates/openshell-policy/src/lib.rs
+// Proto/tonic conversions are omitted; only the pure serde round-trip is kept.
+// Rationale: https://github.com/NVIDIA/OpenShell/issues/1608
 
 use std::collections::BTreeMap;
 
