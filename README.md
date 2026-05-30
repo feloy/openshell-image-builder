@@ -250,4 +250,68 @@ $ openshell sandbox create \
   --name opencode_anthropic_sandbox \
   --no-auto-providers \
   -- opencode
-````
+```
+
+### Claude Code agent + Vertex AI models provider
+
+```
+$ openshell-image-builder \
+  --agent claude \
+  --inference vertexai \
+  sandbox_image:claude_vertexai
+
+# change value of ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION
+$ openshell sandbox create \
+  --from sandbox_image:claude_vertexai \
+  --upload . \
+  --name claude_vertexai_sandbox \
+  --no-auto-providers \
+  --no-tty \
+  -- bash -c '(\
+    echo export CLAUDE_CODE_USE_VERTEX=1; \
+    echo export ANTHROPIC_VERTEX_PROJECT_ID=my-gcp-project; \
+    echo export CLOUD_ML_REGION=global \
+  ) >> /sandbox/.bashrc'
+
+$ openshell sandbox upload \
+  claude_vertexai_sandbox \
+  $HOME/.config/gcloud/application_default_credentials.json \
+  /sandbox/.config/gcloud/application_default_credentials.json
+
+$ openshell sandbox connect claude_vertexai_sandbox
+
+sandbox:~$ claude
+```
+
+### Opencode agent + Vertex AI models provider
+
+```
+$ openshell-image-builder \
+  --agent opencode \
+  --inference vertexai \
+  sandbox_image:opencode_vertexai
+
+# change value of GOOGLE_CLOUD_PROJECT and VERTEX_LOCATION
+$ openshell sandbox create \
+  --from sandbox_image:opencode_vertexai \
+  --upload . \
+  --name opencode_vertexai_sandbox \
+  --no-auto-providers \
+  --no-tty \
+  -- bash -c '(\
+    echo export GOOGLE_CLOUD_PROJECT=my-gcp-project; \
+    echo export VERTEX_LOCATION=global; \
+    echo export GOOGLE_APPLICATION_CREDENTIALS=/sandbox/.config/gcloud/application_default_credentials.json \
+  ) >> /sandbox/.bashrc'
+
+$ openshell sandbox upload \
+  opencode_vertexai_sandbox \
+  $HOME/.config/gcloud/application_default_credentials.json \
+  /sandbox/.config/gcloud/application_default_credentials.json
+
+$ openshell sandbox connect opencode_vertexai_sandbox
+
+sandbox:~$ opencode
+
+# select a model with /models
+```

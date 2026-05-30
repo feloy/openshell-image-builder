@@ -57,9 +57,13 @@ fn run_in_image(image: &str, cmd: &str) -> Output {
 static UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static UBUNTU_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_CLAUDE_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_IMAGE: OnceLock<String> = OnceLock::new();
+static FEDORA_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
+static FEDORA_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 
 fn ubuntu_image() -> &'static str {
     UBUNTU_IMAGE.get_or_init(|| build_image("openshell-test-ubuntu:integration", &[]))
@@ -122,6 +126,58 @@ fn fedora_opencode_image() -> &'static str {
                 "opencode",
                 "--inference",
                 "anthropic",
+            ],
+        )
+    })
+}
+
+fn ubuntu_claude_vertexai_image() -> &'static str {
+    UBUNTU_CLAUDE_VERTEXAI_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-claude-vertexai:integration",
+            &["--agent", "claude", "--inference", "vertexai"],
+        )
+    })
+}
+
+fn ubuntu_opencode_vertexai_image() -> &'static str {
+    UBUNTU_OPENCODE_VERTEXAI_IMAGE.get_or_init(|| {
+        build_image(
+            "openshell-test-ubuntu-opencode-vertexai:integration",
+            &["--agent", "opencode", "--inference", "vertexai"],
+        )
+    })
+}
+
+fn fedora_claude_vertexai_image() -> &'static str {
+    FEDORA_CLAUDE_VERTEXAI_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image(
+            "openshell-test-fedora-claude-vertexai:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "claude",
+                "--inference",
+                "vertexai",
+            ],
+        )
+    })
+}
+
+fn fedora_opencode_vertexai_image() -> &'static str {
+    FEDORA_OPENCODE_VERTEXAI_IMAGE.get_or_init(|| {
+        let config = fedora_config_file();
+        build_image(
+            "openshell-test-fedora-opencode-vertexai:integration",
+            &[
+                "--config",
+                config.path().to_str().unwrap(),
+                "--agent",
+                "opencode",
+                "--inference",
+                "vertexai",
             ],
         )
     })
@@ -255,12 +311,29 @@ fn check_anthropic_policy(image: &str, expected: bool) {
     }
 }
 
+fn check_vertexai_policy(image: &str, expected: bool) {
+    let out = run_in_image(image, "cat /etc/openshell/policy.yaml");
+    assert!(out.status.success(), "failed to read policy.yaml");
+    let policy = String::from_utf8_lossy(&out.stdout);
+    if expected {
+        assert!(
+            policy.contains("name: vertexai"),
+            "vertexai inference policy rule not found in policy.yaml"
+        );
+    } else {
+        assert!(
+            !policy.contains("name: vertexai"),
+            "vertexai inference policy rule should not be present in policy.yaml"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Matrix: base_image × agent — one test module per variant
 // ---------------------------------------------------------------------------
 
 macro_rules! image_tests {
-    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal, has_anthropic: $has_anthropic:literal) => {
+    ($mod_name:ident, $image_fn:ident, has_claude: $has_claude:literal, has_opencode: $has_opencode:literal, has_anthropic: $has_anthropic:literal, has_vertexai: $has_vertexai:literal) => {
         mod $mod_name {
             use super::*;
 
@@ -317,16 +390,26 @@ macro_rules! image_tests {
             fn policy_has_anthropic_rules() {
                 check_anthropic_policy($image_fn(), $has_anthropic);
             }
+
+            #[test]
+            #[ignore]
+            fn policy_has_vertexai_rules() {
+                check_vertexai_policy($image_fn(), $has_vertexai);
+            }
         }
     };
 }
 
-image_tests!(ubuntu,          ubuntu_image,          has_claude: false, has_opencode: false, has_anthropic: false);
-image_tests!(ubuntu_claude,   ubuntu_claude_image,   has_claude: true,  has_opencode: false, has_anthropic: true);
-image_tests!(ubuntu_opencode, ubuntu_opencode_image, has_claude: false, has_opencode: true,  has_anthropic: true);
-image_tests!(fedora,          fedora_image,          has_claude: false, has_opencode: false, has_anthropic: false);
-image_tests!(fedora_claude,   fedora_claude_image,   has_claude: true,  has_opencode: false, has_anthropic: true);
-image_tests!(fedora_opencode, fedora_opencode_image, has_claude: false, has_opencode: true,  has_anthropic: true);
+image_tests!(ubuntu,                  ubuntu_image,                  has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
+image_tests!(ubuntu_claude,           ubuntu_claude_image,           has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
+image_tests!(ubuntu_opencode,         ubuntu_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
+image_tests!(ubuntu_claude_vertexai,  ubuntu_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
+image_tests!(ubuntu_opencode_vertexai,ubuntu_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
+image_tests!(fedora,                  fedora_image,                  has_claude: false, has_opencode: false, has_anthropic: false, has_vertexai: false);
+image_tests!(fedora_claude,           fedora_claude_image,           has_claude: true,  has_opencode: false, has_anthropic: true,  has_vertexai: false);
+image_tests!(fedora_opencode,         fedora_opencode_image,         has_claude: false, has_opencode: true,  has_anthropic: true,  has_vertexai: false);
+image_tests!(fedora_claude_vertexai,  fedora_claude_vertexai_image,  has_claude: true,  has_opencode: false, has_anthropic: false, has_vertexai: true);
+image_tests!(fedora_opencode_vertexai,fedora_opencode_vertexai_image,has_claude: false, has_opencode: true,  has_anthropic: false, has_vertexai: true);
 
 // ---------------------------------------------------------------------------
 // Workspace helpers for feature-based builds
@@ -682,9 +765,13 @@ fn cleanup_images() {
         "openshell-test-ubuntu:integration",
         "openshell-test-ubuntu-claude:integration",
         "openshell-test-ubuntu-opencode:integration",
+        "openshell-test-ubuntu-claude-vertexai:integration",
+        "openshell-test-ubuntu-opencode-vertexai:integration",
         "openshell-test-fedora:integration",
         "openshell-test-fedora-claude:integration",
         "openshell-test-fedora-opencode:integration",
+        "openshell-test-fedora-claude-vertexai:integration",
+        "openshell-test-fedora-opencode-vertexai:integration",
         "openshell-test-feature-common-utils-ubuntu:integration",
         "openshell-test-feature-node-ubuntu:integration",
         "openshell-test-feature-python-ubuntu:integration",

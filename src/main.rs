@@ -189,4 +189,14 @@ mod tests {
         );
         assert!(yaml.contains("/sandbox/.local/bin/claude"));
     }
+
+    #[test]
+    fn build_policy_with_vertexai_inference_includes_aiplatform_rule() {
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            Some(&inference::VertexAiInference),
+        );
+        assert!(yaml.contains("aiplatform.googleapis.com"));
+    }
 }
