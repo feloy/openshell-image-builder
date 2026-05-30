@@ -15,9 +15,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod anthropic;
+mod vertexai;
 
 #[cfg(test)]
 pub use anthropic::AnthropicInference;
+#[cfg(test)]
+pub use vertexai::VertexAiInference;
 
 use clap::ValueEnum;
 
@@ -29,10 +32,13 @@ pub trait Inference {
 #[derive(Clone, ValueEnum)]
 pub enum InferenceKind {
     Anthropic,
+    #[value(name = "vertexai")]
+    VertexAi,
 }
 
 pub fn from_kind(kind: InferenceKind) -> Box<dyn Inference> {
     match kind {
         InferenceKind::Anthropic => Box::new(anthropic::AnthropicInference),
+        InferenceKind::VertexAi => Box::new(vertexai::VertexAiInference),
     }
 }
