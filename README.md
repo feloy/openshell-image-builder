@@ -534,7 +534,7 @@ $ openshell sandbox create \
 
 ### OpenCode agent + OpenAI models provider
 
-```
+```sh
 $ openshell-image-builder \
   --agent opencode \
   --inference openai \
@@ -557,7 +557,7 @@ $ openshell sandbox create \
 
 To use an OpenAI-compatible endpoint (e.g. Azure OpenAI, a local proxy, or another provider's API):
 
-```
+```sh
 $ openshell-image-builder \
   --agent opencode \
   --inference openai \
