@@ -16,7 +16,7 @@ After creating the skill, register it in `.agents/skills/README.md`.
 
 ## File structure
 
-```
+```text
 .agents/skills/
 ├── README.md                  ← index of all skills (update this)
 └── <skill-name>/

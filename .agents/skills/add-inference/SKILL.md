@@ -231,13 +231,13 @@ If the provider writes config files or env vars, add a `mod myprovider { ... }` 
 
 Add the new provider to the canonical reference list at the top of the **Description** section of this skill, following the same one-line format as the existing entries:
 
-```
+```text
 - **`myprovider`** — <cloud|local>, <endpoint behaviour>, <any special wiring>.
 ```
 
 This keeps the reference list accurate and gives the next contributor a concrete example to follow for a similar provider.
 
-## Step 8 — update `README.md`
+## Step 7 — update `README.md`
 
 - **Intro layer list** — if the new provider adds a new entry to the "Inference network rules" bullet, update the description.
 - **"Configuring inference" table** — add a row with the `--inference` value, supported agents, and what the provider connects to.

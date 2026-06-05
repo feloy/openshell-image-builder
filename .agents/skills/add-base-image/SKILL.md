@@ -60,7 +60,7 @@ Three places reference the supported base image names; all must be kept in sync:
    - The inline comment on the `image` key: `# "ubuntu", "fedora", "ubi", or "hummingbird"` → add `"myimage"`.
    - The `base_image.image` row description and the `base_image.tag` row description — add the new name and its typical tag examples.
 
-## Step 4 — add the match arm in `generate()` (`src/containerfile.rs`)
+## Step 3 — add the match arm in `generate()` (`src/containerfile.rs`)
 
 Inside `generate()`, add a new arm to the `match config.base_image.image.as_str()` block before the catch-all `image =>` arm:
 
@@ -82,7 +82,7 @@ Inside `generate()`, add a new arm to the `match config.base_image.image.as_str(
 
 The `final_stage` is shared across all base images and never needs changes.
 
-## Step 5 — unit tests (`src/containerfile.rs`, `#[cfg(test)]`)
+## Step 4 — unit tests (`src/containerfile.rs`, `#[cfg(test)]`)
 
 Add a config helper alongside the existing ones (`fedora_config`, `ubi_config`, etc.):
 
@@ -158,7 +158,7 @@ fn home_env_set_to_sandbox() {
 }
 ```
 
-## Step 6 — integration tests (`tests/integration_test.rs`)
+## Step 5 — integration tests (`tests/integration_test.rs`)
 
 ### Config helper
 

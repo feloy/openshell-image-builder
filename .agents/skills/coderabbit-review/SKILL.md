@@ -12,13 +12,23 @@ Fetch and act on CodeRabbitAI review feedback for a pull request.
 
 ### Step 1 — identify the PR and its base repository
 
-If a PR number was given as argument, use it. Otherwise resolve from the current branch:
+If a PR number was given as argument, use it directly and skip to Step 2 — the base repo is the `upstream` remote (see below).
+
+Otherwise, resolve the PR from the current branch. In a fork workflow the PR lives on the upstream repo, not the fork, so `gh pr view` without `--repo` will fail. Resolve the upstream slug first:
 
 ```bash
-gh pr view --json number,baseRepository
+git remote get-url upstream
+# https://github.com/owner/repo.git  →  owner/repo
+# git@github.com:owner/repo.git      →  owner/repo
 ```
 
-Extract `number` (the PR number) and `baseRepository.nameWithOwner` (the `owner/repo` slug of the repo where the PR lives — this is the base repo, not the fork).
+Strip the protocol prefix and `.git` suffix to get `<owner/repo>`, then look up the PR:
+
+```bash
+gh pr view --repo <owner/repo> --json number,url
+```
+
+Use `number` as the PR number and `<owner/repo>` as the base repo slug for all subsequent API calls.
 
 ### Step 2 — fetch inline review comments
 

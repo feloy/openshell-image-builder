@@ -11,7 +11,7 @@ Run the mandatory pre-commit check suite for openshell-image-builder.
 
 CLAUDE.md requires this suite to pass before staging any commit:
 
-```
+```bash
 cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
