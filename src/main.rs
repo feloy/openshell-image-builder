@@ -143,6 +143,7 @@ fn run(
         agent.as_deref(),
         inference.as_deref(),
         base_url.as_deref(),
+        workspace.as_ref(),
     )?;
     std::fs::write(context_dir.path().join("policy.yaml"), policy_yaml)?;
     let output = containerfile::generate(
@@ -276,11 +277,57 @@ fn stage_agent_settings(
     Ok(true)
 }
 
+fn parse_workspace_host(s: &str) -> (String, u16) {
+    let url_str = if s.contains("://") {
+        s.to_string()
+    } else {
+        format!("https://{s}")
+    };
+    if let Ok(parsed) = url::Url::parse(&url_str)
+        && let Some(host) = parsed.host_str()
+    {
+        let port = parsed.port().unwrap_or(443);
+        return (host.to_string(), port);
+    }
+    (s.to_string(), 443)
+}
+
+fn workspace_hosts_policy(
+    hosts: &[String],
+    agent_binary: Option<&str>,
+) -> policy::NetworkPolicyRule {
+    let mut binaries = vec![
+        policy::NetworkBinary::new("/bin/**"),
+        policy::NetworkBinary::new("/usr/bin/**"),
+        policy::NetworkBinary::new("/usr/local/bin/**"),
+        policy::NetworkBinary::new("/sandbox/.local/bin/**"),
+    ];
+    if let Some(bin) = agent_binary {
+        binaries.push(policy::NetworkBinary::new(bin));
+    }
+    policy::NetworkPolicyRule {
+        name: "workspace".to_string(),
+        endpoints: hosts
+            .iter()
+            .map(|s| {
+                let (host, port) = parse_workspace_host(s);
+                policy::NetworkEndpoint {
+                    host,
+                    port,
+                    ..Default::default()
+                }
+            })
+            .collect(),
+        binaries,
+    }
+}
+
 fn build_policy(
     base_yaml: &str,
     agent: Option<&dyn agent::Agent>,
     inference: Option<&dyn inference::Inference>,
     base_url: Option<&str>,
+    workspace: Option<&workspace::WorkspaceConfiguration>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut sandbox_policy = policy::parse_sandbox_policy(base_yaml)?;
     if let (Some(inference), Some(agent)) = (inference, agent) {
@@ -298,6 +345,17 @@ fn build_policy(
                 .network_policies
                 .extend(agent_policy.network_policies);
         }
+    }
+    if let Some(hosts) = workspace
+        .and_then(|ws| ws.network.as_ref())
+        .map(|net| net.hosts.as_slice())
+        .filter(|h| !h.is_empty())
+    {
+        let agent_binary = agent.map(|a| a.binary_path());
+        sandbox_policy.network_policies.insert(
+            "workspace".to_string(),
+            workspace_hosts_policy(hosts, agent_binary),
+        );
     }
     Ok(policy::serialize_sandbox_policy(&sandbox_policy)?)
 }
@@ -326,19 +384,33 @@ mod tests {
 
     #[test]
     fn build_policy_without_agent_has_no_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, None, None, None).unwrap();
+        let yaml = build_policy(BASE_POLICY_YAML, None, None, None, None).unwrap();
         assert!(!yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_with_claude_agent_includes_claude_code_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None, None).unwrap();
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(yaml.contains("name: claude-code"));
     }
 
     #[test]
     fn build_policy_without_inference_has_no_anthropic_rule() {
-        let yaml = build_policy(BASE_POLICY_YAML, Some(&agent::ClaudeAgent), None, None).unwrap();
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(!yaml.contains("api.anthropic.com"));
     }
 
@@ -348,6 +420,7 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
+            None,
             None,
         )
         .unwrap();
@@ -361,6 +434,7 @@ mod tests {
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
             None,
+            None,
         )
         .unwrap();
         assert!(yaml.contains("/sandbox/.local/bin/claude"));
@@ -372,6 +446,7 @@ mod tests {
             BASE_POLICY_YAML,
             Some(&agent::ClaudeAgent),
             Some(&inference::VertexAiInference),
+            None,
             None,
         )
         .unwrap();
@@ -385,6 +460,7 @@ mod tests {
             Some(&agent::ClaudeAgent),
             Some(&inference::OllamaInference),
             None,
+            None,
         )
         .unwrap();
         assert!(yaml.contains("host.openshell.internal"));
@@ -397,6 +473,7 @@ mod tests {
             Some(&agent::ClaudeAgent),
             Some(&inference::AnthropicInference),
             Some("https://my-anthropic-proxy.example.com"),
+            None,
         )
         .unwrap();
         assert!(yaml.contains("my-anthropic-proxy.example.com"));
@@ -410,6 +487,7 @@ mod tests {
             Some(&agent::ClaudeAgent),
             Some(&inference::OllamaInference),
             Some("http://host.openshell.internal:9999/v1"),
+            None,
         )
         .unwrap();
         assert!(yaml.contains("host.openshell.internal"));
@@ -946,6 +1024,7 @@ mod tests {
             Some(&agent::OpencodeAgent),
             Some(&inference::OpenAiInference),
             None,
+            None,
         )
         .unwrap();
         assert!(yaml.contains("api.openai.com"));
@@ -1020,5 +1099,110 @@ mod tests {
                 .join("config.json")
                 .exists()
         );
+    }
+
+    // parse_workspace_host
+
+    #[test]
+    fn parse_workspace_host_defaults_to_443() {
+        let (host, port) = parse_workspace_host("example.com");
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 443);
+    }
+
+    #[test]
+    fn parse_workspace_host_respects_explicit_port() {
+        let (host, port) = parse_workspace_host("example.com:8080");
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn parse_workspace_host_with_full_https_url() {
+        let (host, port) = parse_workspace_host("https://example.com:8443");
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 8443);
+    }
+
+    // workspace_hosts_policy
+
+    #[test]
+    fn workspace_hosts_policy_creates_one_rule_with_all_endpoints() {
+        let hosts = vec!["example.com".to_string(), "api.foo.com:8443".to_string()];
+        let rule = workspace_hosts_policy(&hosts, None);
+        assert_eq!(rule.name, "workspace");
+        assert_eq!(rule.endpoints.len(), 2);
+        assert_eq!(rule.endpoints[0].host, "example.com");
+        assert_eq!(rule.endpoints[0].port, 443);
+        assert_eq!(rule.endpoints[1].host, "api.foo.com");
+        assert_eq!(rule.endpoints[1].port, 8443);
+    }
+
+    #[test]
+    fn workspace_hosts_policy_includes_glob_binaries() {
+        let hosts = vec!["example.com".to_string()];
+        let rule = workspace_hosts_policy(&hosts, None);
+        let paths: Vec<&str> = rule.binaries.iter().map(|b| b.path.as_str()).collect();
+        assert!(paths.contains(&"/bin/**"));
+        assert!(paths.contains(&"/usr/bin/**"));
+        assert!(paths.contains(&"/usr/local/bin/**"));
+        assert!(paths.contains(&"/sandbox/.local/bin/**"));
+    }
+
+    #[test]
+    fn workspace_hosts_policy_includes_agent_binary_when_provided() {
+        let hosts = vec!["example.com".to_string()];
+        let rule = workspace_hosts_policy(&hosts, Some("/sandbox/.local/bin/claude"));
+        let paths: Vec<&str> = rule.binaries.iter().map(|b| b.path.as_str()).collect();
+        assert!(paths.contains(&"/sandbox/.local/bin/claude"));
+    }
+
+    #[test]
+    fn workspace_hosts_policy_omits_agent_binary_when_none() {
+        let hosts = vec!["example.com".to_string()];
+        let rule = workspace_hosts_policy(&hosts, None);
+        assert_eq!(rule.binaries.len(), 4);
+    }
+
+    // build_policy with workspace hosts
+
+    #[test]
+    fn build_policy_with_workspace_hosts_includes_host() {
+        use kdn_workspace_configuration::{NetworkConfiguration, NetworkConfigurationMode};
+        let mut ws = workspace::WorkspaceConfiguration::default();
+        ws.network = Some(NetworkConfiguration {
+            hosts: vec!["myhost.example.com".to_string()],
+            mode: NetworkConfigurationMode::Deny,
+        });
+        let yaml = build_policy(BASE_POLICY_YAML, None, None, None, Some(&ws)).unwrap();
+        assert!(yaml.contains("myhost.example.com"));
+        assert!(yaml.contains("workspace"));
+    }
+
+    #[test]
+    fn build_policy_with_workspace_hosts_includes_agent_binary() {
+        use kdn_workspace_configuration::{NetworkConfiguration, NetworkConfigurationMode};
+        let mut ws = workspace::WorkspaceConfiguration::default();
+        ws.network = Some(NetworkConfiguration {
+            hosts: vec!["myhost.example.com".to_string()],
+            mode: NetworkConfigurationMode::Deny,
+        });
+        let yaml = build_policy(
+            BASE_POLICY_YAML,
+            Some(&agent::ClaudeAgent),
+            None,
+            None,
+            Some(&ws),
+        )
+        .unwrap();
+        assert!(yaml.contains("/sandbox/.local/bin/claude"));
+    }
+
+    #[test]
+    fn build_policy_with_empty_network_hosts_unchanged() {
+        let ws = workspace::WorkspaceConfiguration::default();
+        let yaml_no_ws = build_policy(BASE_POLICY_YAML, None, None, None, None).unwrap();
+        let yaml_ws = build_policy(BASE_POLICY_YAML, None, None, None, Some(&ws)).unwrap();
+        assert_eq!(yaml_no_ws, yaml_ws);
     }
 }
