@@ -98,6 +98,11 @@ static HUMMINGBIRD_CLAUDE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static HUMMINGBIRD_OPENCODE_VERTEXAI_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_CLAUDE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_SKILLS_IMAGE: OnceLock<String> = OnceLock::new();
+static NO_WORKSPACE_CONFIG_OCI_FEATURE_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static NO_WORKSPACE_CONFIG_LOCAL_FEATURE_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static NO_WORKSPACE_CONFIG_CLAUDE_SKILLS_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static NO_WORKSPACE_CONFIG_OPENCODE_SKILLS_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
+static NO_WORKSPACE_CONFIG_NETWORK_HOSTS_UBUNTU_IMAGE: OnceLock<String> = OnceLock::new();
 static UBUNTU_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
 static FEDORA_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
 static UBI_OPENCODE_OLLAMA_IMAGE: OnceLock<String> = OnceLock::new();
@@ -749,6 +754,7 @@ fn build_image_with_workspace(tag: &str, workspace_json: &str, extra_args: &[&st
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .arg("--with-workspace-config")
         .args(extra_args)
         .arg(tag)
         .status()
@@ -796,6 +802,12 @@ const PYTHON_WORKSPACE: &str = r#"{
             "version": "os-provided",
             "installTools": true
         }
+    }
+}"#;
+
+const NETWORK_HOSTS_WORKSPACE: &str = r#"{
+    "network": {
+        "hosts": ["example.com"]
     }
 }"#;
 
@@ -928,6 +940,7 @@ fn build_image_with_local_feature(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .arg("--with-workspace-config")
         .args(extra_args)
         .arg(tag)
         .status()
@@ -986,6 +999,7 @@ fn build_image_with_skills(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .arg("--with-workspace-config")
         .args(extra_args)
         .arg(tag)
         .status()
@@ -1008,6 +1022,89 @@ fn ubuntu_opencode_skills_image() -> &'static str {
         build_image_with_skills(
             "openshell-test-ubuntu-opencode-skills:integration",
             &["--agent", "opencode"],
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Helpers and singletons for --with-workspace-config absence tests
+// ---------------------------------------------------------------------------
+
+/// Like build_image_with_workspace but WITHOUT --with-workspace-config, so the
+/// workspace file is present on disk but deliberately ignored by the tool.
+fn build_image_in_workspace_dir(tag: &str, workspace_json: &str, extra_args: &[&str]) -> String {
+    let dir = workspace_dir(workspace_json);
+    let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+    let status = Command::new(binary)
+        .current_dir(dir.path())
+        .args(extra_args)
+        .arg(tag)
+        .status()
+        .expect("binary should run");
+    assert!(status.success(), "image build failed for tag {tag}");
+    tag.to_string()
+}
+
+fn no_workspace_config_oci_feature_ubuntu_image() -> &'static str {
+    NO_WORKSPACE_CONFIG_OCI_FEATURE_UBUNTU_IMAGE.get_or_init(|| {
+        build_image_in_workspace_dir(
+            "openshell-test-no-workspace-config-oci-feature-ubuntu:integration",
+            COMMON_UTILS_WORKSPACE,
+            &[],
+        )
+    })
+}
+
+fn no_workspace_config_local_feature_ubuntu_image() -> &'static str {
+    NO_WORKSPACE_CONFIG_LOCAL_FEATURE_UBUNTU_IMAGE.get_or_init(|| {
+        let dir = local_feature_workspace_dir();
+        let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+        let status = Command::new(binary)
+            .current_dir(dir.path())
+            .arg("openshell-test-no-workspace-config-local-feature-ubuntu:integration")
+            .status()
+            .expect("binary should run");
+        assert!(status.success(), "image build failed");
+        "openshell-test-no-workspace-config-local-feature-ubuntu:integration".to_string()
+    })
+}
+
+fn no_workspace_config_claude_skills_ubuntu_image() -> &'static str {
+    NO_WORKSPACE_CONFIG_CLAUDE_SKILLS_UBUNTU_IMAGE.get_or_init(|| {
+        let dir = skills_workspace_dir();
+        let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+        let status = Command::new(binary)
+            .current_dir(dir.path())
+            .args(["--agent", "claude"])
+            .arg("openshell-test-no-workspace-config-claude-skills-ubuntu:integration")
+            .status()
+            .expect("binary should run");
+        assert!(status.success(), "image build failed");
+        "openshell-test-no-workspace-config-claude-skills-ubuntu:integration".to_string()
+    })
+}
+
+fn no_workspace_config_opencode_skills_ubuntu_image() -> &'static str {
+    NO_WORKSPACE_CONFIG_OPENCODE_SKILLS_UBUNTU_IMAGE.get_or_init(|| {
+        let dir = skills_workspace_dir();
+        let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
+        let status = Command::new(binary)
+            .current_dir(dir.path())
+            .args(["--agent", "opencode"])
+            .arg("openshell-test-no-workspace-config-opencode-skills-ubuntu:integration")
+            .status()
+            .expect("binary should run");
+        assert!(status.success(), "image build failed");
+        "openshell-test-no-workspace-config-opencode-skills-ubuntu:integration".to_string()
+    })
+}
+
+fn no_workspace_config_network_hosts_ubuntu_image() -> &'static str {
+    NO_WORKSPACE_CONFIG_NETWORK_HOSTS_UBUNTU_IMAGE.get_or_init(|| {
+        build_image_in_workspace_dir(
+            "openshell-test-no-workspace-config-network-hosts-ubuntu:integration",
+            NETWORK_HOSTS_WORKSPACE,
+            &[],
         )
     })
 }
@@ -1616,6 +1713,82 @@ mod skills_opencode {
         assert!(
             !out.status.success(),
             "skill directory should not be present in image built without skills"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests: workspace content excluded when --with-workspace-config is absent
+// ---------------------------------------------------------------------------
+
+mod without_workspace_config {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn oci_feature_not_installed() {
+        // COMMON_UTILS_WORKSPACE declares common-utils which installs zsh.
+        // Without --with-workspace-config the workspace file must be ignored.
+        let out = run_in_image(no_workspace_config_oci_feature_ubuntu_image(), "which zsh");
+        assert!(
+            !out.status.success(),
+            "zsh should not be installed when --with-workspace-config is absent"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn local_feature_not_applied() {
+        // The local feature workspace creates /sandbox/hello-from-feature.
+        // Without --with-workspace-config that file must not exist.
+        let out = run_in_image(
+            no_workspace_config_local_feature_ubuntu_image(),
+            "test -f /sandbox/hello-from-feature",
+        );
+        assert!(
+            !out.status.success(),
+            "local feature file should not exist when --with-workspace-config is absent"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn claude_skills_not_copied() {
+        let out = run_in_image(
+            no_workspace_config_claude_skills_ubuntu_image(),
+            "test -d /sandbox/.claude/skills/my-skill",
+        );
+        assert!(
+            !out.status.success(),
+            "claude skill directory should not exist when --with-workspace-config is absent"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn opencode_skills_not_copied() {
+        let out = run_in_image(
+            no_workspace_config_opencode_skills_ubuntu_image(),
+            "test -d /sandbox/.opencode/skills/my-skill",
+        );
+        assert!(
+            !out.status.success(),
+            "opencode skill directory should not exist when --with-workspace-config is absent"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn network_hosts_not_in_policy() {
+        let out = run_in_image(
+            no_workspace_config_network_hosts_ubuntu_image(),
+            "cat /etc/openshell/policy.yaml",
+        );
+        assert!(out.status.success(), "failed to read policy.yaml");
+        let policy = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !policy.contains("name: workspace"),
+            "workspace network rule should not be present when --with-workspace-config is absent"
         );
     }
 }
@@ -2374,6 +2547,11 @@ fn cleanup_images() {
         "openshell-test-ubuntu-claude-vertexai-model:integration",
         "openshell-test-ubuntu-opencode-anthropic-model:integration",
         "openshell-test-ubuntu-opencode-ollama-model:integration",
+        "openshell-test-no-workspace-config-oci-feature-ubuntu:integration",
+        "openshell-test-no-workspace-config-local-feature-ubuntu:integration",
+        "openshell-test-no-workspace-config-claude-skills-ubuntu:integration",
+        "openshell-test-no-workspace-config-opencode-skills-ubuntu:integration",
+        "openshell-test-no-workspace-config-network-hosts-ubuntu:integration",
     ] {
         Command::new("podman")
             .args(["rmi", "--force", tag])
