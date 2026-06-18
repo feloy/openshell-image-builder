@@ -19,12 +19,12 @@ The tool assembles the image in layers — base image, agent installation, agent
    - **Base policy** — Git operations over HTTPS and the GitHub REST API.
    - **Agent network rules** — agent-specific endpoints are added by `--agent`.
    - **Inference network rules** — LLM backend endpoints are added by `--inference`.
-   - **Workspace network rules** — user-defined hosts declared in `.kaiden/workspace.json` are added to the policy.
-5. **Installation of project-specific toolchains** — toolchains and utilities declared as Dev Container Features in `.kaiden/workspace.json` are installed in the image.
+   - **Workspace network rules** — user-defined hosts declared in `.kaiden/workspace.json` are added to the policy when `--with-workspace-config` is used.
+5. **Installation of project-specific toolchains** — toolchains and utilities declared as Dev Container Features in `.kaiden/workspace.json` are installed in the image when `--with-workspace-config` is used.
 
 ### workspace.json fields
 
-`.kaiden/workspace.json` is the per-workspace configuration file. The following fields are supported:
+`.kaiden/workspace.json` is the per-workspace configuration file, read when `--with-workspace-config` is passed. The following fields are supported:
 
 | Field | Description | Details |
 | ----- | ----------- | ------- |
@@ -342,11 +342,11 @@ The policy is built in four layers, merged in order:
 1. **Base** ([`assets/policy.yaml`](assets/policy.yaml)) — general-purpose tooling: Git operations over HTTPS and the GitHub REST API via `gh`.
 2. **Inference** (added by `--inference`) — LLM backend endpoints scoped to the agent binary. For example, `--inference anthropic` adds `api.anthropic.com` and `statsig.anthropic.com`; `--inference vertexai` adds `oauth2.googleapis.com` and `aiplatform.googleapis.com` (including the `*-aiplatform.googleapis.com` wildcard); `--inference ollama` adds `host.openshell.internal:11434` for local model access; `--inference openai` adds `api.openai.com` (or the custom endpoint host when `--endpoint` is used).
 3. **Agent** (added by `--agent`) — agent-specific endpoints. For example, `--agent claude` adds `platform.claude.com`, `raw.githubusercontent.com`, and the GitHub REST API for Claude's coding tools; `--agent opencode` adds `opencode.ai`, `registry.npmjs.org`, and `models.dev`.
-4. **Workspace** (added from `network.hosts` in `.kaiden/workspace.json`) — user-defined hosts that any binary in standard PATH directories (`/bin`, `/usr/bin`, `/usr/local/bin`, `/sandbox/.local/bin`) and the agent binary (when present) may reach. See [Workspace network rules](#workspace-network-rules).
+4. **Workspace** (added from `network.hosts` in `.kaiden/workspace.json` when `--with-workspace-config` is used) — user-defined hosts that any binary in standard PATH directories (`/bin`, `/usr/bin`, `/usr/local/bin`, `/sandbox/.local/bin`) and the agent binary (when present) may reach. See [Workspace network rules](#workspace-network-rules).
 
 ## Dev Container Features
 
-The tool supports [Dev Container Features](https://containers.dev/implementors/features/) declared in `.kaiden/workspace.json` in the current directory.
+The tool supports [Dev Container Features](https://containers.dev/implementors/features/) declared in `.kaiden/workspace.json`. Pass `--with-workspace-config` to enable this; without it the file is not read and no features are installed.
 
 ### workspace.json schema
 
@@ -395,7 +395,7 @@ Features are installed in the order defined by each feature's `installsAfter` fi
 
 ## Skills
 
-Agents can be extended with *skills* — named toolkits that an agent discovers at startup. Declare skill directories in `.kaiden/workspace.json`:
+Agents can be extended with *skills* — named toolkits that an agent discovers at startup. Declare skill directories in `.kaiden/workspace.json` and pass `--with-workspace-config` to include them in the build:
 
 ```json
 {
@@ -421,7 +421,7 @@ Skills without a corresponding `--agent` flag are silently ignored — the agent
 
 ### How it works
 
-When `.kaiden/workspace.json` is present, the tool:
+When `--with-workspace-config` is passed, the tool reads `.kaiden/workspace.json` and:
 
 1. Downloads and extracts each OCI feature into a temporary build context directory (`/tmp/openshell-image-builder…`).
 2. Copies local feature directories into the same build context.
@@ -439,7 +439,7 @@ Features run as root so install scripts can write to system paths.
 
 The OpenShell sandbox enforces a **deny-by-default** network policy: all outbound connections are blocked unless explicitly listed in the policy. There is no supported way to allow all hosts — the sandbox does not implement an allow-all mode. The `network.mode` field in `workspace.json` (which some orchestrators read to switch between `deny` and `allow`) is ignored by the image builder; the policy is always assembled in deny mode with explicit allow-rules.
 
-Use the `network.hosts` field in `.kaiden/workspace.json` to allow additional hosts — for example, package registries or internal APIs that your project's toolchain needs to reach.
+Use the `network.hosts` field in `.kaiden/workspace.json` to allow additional hosts — for example, package registries or internal APIs that your project's toolchain needs to reach. Pass `--with-workspace-config` to enable this; without it the file is not read and no workspace network rules are added.
 
 ```json
 {
@@ -492,15 +492,16 @@ With this configuration, `cargo build` and `cargo fetch` inside the sandbox can 
 openshell-image-builder [OPTIONS] <TAG>
 ```
 
-| Argument / Option          | Description                                                        |
-| -------------------------- | ------------------------------------------------------------------ |
-| `<TAG>`                    | Tag for the built image (e.g. `myimage:latest`)                    |
-| `--config <CONFIG>`        | Path to config directory containing `config.toml` (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
-| `--agent <AGENT>`          | Agent to install in the image (`claude`, `opencode`)               |
-| `--inference <INFERENCE>`  | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`, `openai`) |
-| `--endpoint <URL>`         | Override the inference provider's default endpoint URL (see [Custom endpoint](#custom-endpoint---endpoint)) |
-| `--model <MODEL>`          | Default model for the agent to use (see [Default model](#default-model---model)) |
-| `-v` / `-vv`               | Increase log verbosity (info / debug)                              |
+| Argument / Option              | Description                                                        |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `<TAG>`                        | Tag for the built image (e.g. `myimage:latest`)                    |
+| `--config <CONFIG>`            | Path to config directory containing `config.toml` (env: `OPENSHELL_IMAGE_BUILDER_CONFIG`) |
+| `--agent <AGENT>`              | Agent to install in the image (`claude`, `opencode`)               |
+| `--inference <INFERENCE>`      | Inference server the agent will connect to (`anthropic`, `vertexai`, `ollama`, `openai`) |
+| `--endpoint <URL>`             | Override the inference provider's default endpoint URL (see [Custom endpoint](#custom-endpoint---endpoint)) |
+| `--model <MODEL>`              | Default model for the agent to use (see [Default model](#default-model---model)) |
+| `--with-workspace-config`      | Read `.kaiden/workspace.json` and apply its features, skills, and network rules |
+| `-v` / `-vv`                   | Increase log verbosity (info / debug)                              |
 
 ## Examples
 

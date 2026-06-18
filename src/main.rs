@@ -61,6 +61,11 @@ struct Cli {
     endpoint: Option<String>,
     #[arg(long, help = "Default model for the agent to use")]
     model: Option<String>,
+    #[arg(
+        long,
+        help = "Read .kaiden/workspace.json and apply its features, skills, and network rules"
+    )]
+    with_workspace_config: bool,
 }
 
 fn main() {
@@ -76,7 +81,7 @@ fn main() {
     if let Err(e) = run(
         &cli.tag,
         cli.config,
-        Path::new("."),
+        cli.with_workspace_config,
         cli.agent,
         cli.inference,
         cli.endpoint.as_deref(),
@@ -92,7 +97,7 @@ fn main() {
 fn run(
     tag: &str,
     config_path: Option<PathBuf>,
-    workspace_base: &Path,
+    with_workspace_config: bool,
     agent_kind: Option<agent::AgentKind>,
     inference_kind: Option<inference::InferenceKind>,
     endpoint: Option<&str>,
@@ -103,7 +108,11 @@ fn run(
         return Err("--endpoint is not supported for the vertexai inference provider".into());
     }
     let config = config::load(config_path.clone())?;
-    let workspace = workspace::load_from(workspace_base)?;
+    let workspace = if with_workspace_config {
+        workspace::load_from(Path::new("."))?
+    } else {
+        None
+    };
     let agent = agent_kind.map(agent::from_kind);
     if let (Some(a), Some(ik)) = (agent.as_deref(), &inference_kind)
         && !a.supported_inference().contains(ik)
@@ -793,7 +802,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             None,
             None,
             None,
@@ -809,7 +818,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             Some(agent::AgentKind::Claude),
             None,
             None,
@@ -825,7 +834,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Anthropic),
             None,
@@ -841,7 +850,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Ollama),
             None,
@@ -863,7 +872,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             None,
             None,
             None,
@@ -879,7 +888,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             None,
             Some(inference::InferenceKind::VertexAi),
             Some("https://my-vertex-proxy.example.com"),
@@ -901,7 +910,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::Anthropic),
             None,
@@ -1059,7 +1068,7 @@ mod tests {
         let result = run(
             "test:latest",
             Some(tmp.path().to_path_buf()),
-            tmp.path(),
+            false,
             Some(agent::AgentKind::Claude),
             Some(inference::InferenceKind::OpenAi),
             None,
