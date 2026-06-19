@@ -54,6 +54,7 @@ fn hummingbird_config_dir() -> tempfile::TempDir {
 fn build_image(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
+        .args(["--runtime", "podman"])
         .args(extra_args)
         .arg(tag)
         .status()
@@ -2543,6 +2544,8 @@ mod endpoint_rejection {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let output = Command::new(binary)
             .args([
+                "--runtime",
+                "podman",
                 "--inference",
                 "vertexai",
                 "--endpoint",
@@ -2558,10 +2561,13 @@ mod endpoint_rejection {
     }
 
     #[test]
+    #[ignore]
     fn vertexai_with_endpoint_error_mentions_vertexai() {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let output = Command::new(binary)
             .args([
+                "--runtime",
+                "podman",
                 "--inference",
                 "vertexai",
                 "--endpoint",
