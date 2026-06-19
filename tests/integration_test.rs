@@ -2618,14 +2618,16 @@ mod with_agent_settings {
 
     #[test]
     #[ignore]
-    fn claude_json_absent_without_flag() {
+    fn claude_json_lacks_trust_dialog_flag_without_agent_settings() {
+        // The Claude installer creates .claude.json, but our skip_onboarding() is the
+        // only thing that sets hasTrustDialogAccepted. Assert it is absent.
         let out = run_in_image(
             ubuntu_claude_no_agent_settings_image(),
-            "test -f /sandbox/.claude.json",
+            r#"grep -q '"hasTrustDialogAccepted"' /sandbox/.claude.json"#,
         );
         assert!(
             !out.status.success(),
-            ".claude.json should not be present when --with-agent-settings is not set"
+            "hasTrustDialogAccepted should not be present when --with-agent-settings is not set"
         );
     }
 }
