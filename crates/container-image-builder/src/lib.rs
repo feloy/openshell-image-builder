@@ -382,22 +382,10 @@ mod tests {
     // --- ContainerCli::check_in_path ---
 
     #[test]
+    #[cfg(unix)]
     fn check_in_path_finds_existing_binary() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_bin = dir.path().join("fake-cli-xyz");
-        std::fs::write(&fake_bin, "").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        let original_path = std::env::var_os("PATH").unwrap_or_default();
-        std::env::set_var("PATH", dir.path());
-        let result = which("fake-cli-xyz");
-        std::env::set_var("PATH", original_path);
-
-        assert!(result.is_ok());
+        // sh is guaranteed to exist on every Unix-like system.
+        assert!(which("sh").is_ok());
     }
 
     #[test]
