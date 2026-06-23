@@ -15,7 +15,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod agent;
-mod build;
 mod config;
 mod containerfile;
 mod feature;
@@ -30,7 +29,32 @@ use std::path::{Path, PathBuf};
 const BASE_POLICY_YAML: &str = include_str!("../assets/policy.yaml");
 
 use clap::Parser;
+use container_image_builder::{ContainerCli, ContainerRunner, Runner, build};
 use log::LevelFilter;
+
+/// Selects which container CLI to use for building images.
+///
+/// This enum is local to the binary so that the library crate (`container-image-builder`)
+/// has no dependency on `clap`. A `From<Runtime>` impl converts to
+/// [`ContainerCli`] after argument parsing.
+#[derive(clap::ValueEnum, Clone)]
+enum Runtime {
+    Podman,
+    Docker,
+    /// Apple's `container` CLI (macOS only).
+    #[value(name = "container")]
+    MacOsContainer,
+}
+
+impl From<Runtime> for ContainerCli {
+    fn from(r: Runtime) -> Self {
+        match r {
+            Runtime::Podman => ContainerCli::Podman,
+            Runtime::Docker => ContainerCli::Docker,
+            Runtime::MacOsContainer => ContainerCli::MacOsContainer,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +65,12 @@ use log::LevelFilter;
 struct Cli {
     #[arg(help = "Tag for the built image (e.g. myimage:latest)")]
     tag: String,
+    #[arg(
+        long,
+        value_enum,
+        help = "Container CLI to use for building images (podman, docker, container)"
+    )]
+    runtime: Runtime,
     #[arg(
         long,
         env = "OPENSHELL_IMAGE_BUILDER_CONFIG",
@@ -82,6 +112,13 @@ fn main() {
         _ => LevelFilter::Debug,
     };
     env_logger::Builder::new().filter_level(log_level).init();
+
+    let container_cli = ContainerCli::from(cli.runtime);
+    if let Err(e) = container_cli.check_in_path() {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+
     if let Err(e) = run(
         &cli.tag,
         cli.config,
@@ -92,7 +129,8 @@ fn main() {
         cli.model.as_deref(),
         cli.with_policy,
         cli.with_agent_settings,
-        &build::PodmanRunner,
+        &container_cli,
+        &ContainerRunner,
     ) {
         eprintln!("Error: {e}");
         std::process::exit(1);
@@ -110,7 +148,8 @@ fn run(
     model: Option<&str>,
     with_policy: bool,
     with_agent_settings: bool,
-    runner: &dyn build::Runner,
+    runtime: &ContainerCli,
+    runner: &dyn Runner,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
         return Err("--endpoint is not supported for the vertexai inference provider".into());
@@ -178,7 +217,7 @@ fn run(
         &agent_env_vars,
         with_policy,
     )?;
-    build::build(&output, tag, runner, context_dir.path())?;
+    build(&output, tag, runtime, runner, context_dir.path())?;
     Ok(())
 }
 
@@ -390,7 +429,7 @@ mod tests {
 
     struct FakeRunner(i32);
 
-    impl build::Runner for FakeRunner {
+    impl Runner for FakeRunner {
         fn run(&self, _cmd: &mut Command) -> std::io::Result<ExitStatus> {
             Ok(Command::new("sh")
                 .args(["-c", &format!("exit {}", self.0)])
@@ -824,6 +863,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -842,6 +882,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -860,6 +901,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -878,6 +920,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -902,6 +945,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(1),
         );
         assert!(result.is_err());
@@ -920,6 +964,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_err());
@@ -944,6 +989,7 @@ mod tests {
             Some("claude-opus-4-5"),
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1104,6 +1150,7 @@ mod tests {
             None,
             true,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1122,6 +1169,7 @@ mod tests {
             None,
             false,
             true,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -1140,6 +1188,7 @@ mod tests {
             None,
             false,
             false,
+            &ContainerCli::Podman,
             &FakeRunner(0),
         );
         assert!(result.is_err());

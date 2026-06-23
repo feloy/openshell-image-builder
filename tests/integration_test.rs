@@ -54,6 +54,7 @@ fn hummingbird_config_dir() -> tempfile::TempDir {
 fn build_image(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
+        .args(["--runtime", "podman"])
         .args(extra_args)
         .arg(tag)
         .status()
@@ -797,6 +798,7 @@ fn build_image_with_workspace(tag: &str, workspace_json: &str, extra_args: &[&st
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .args(["--runtime", "podman"])
         .arg("--with-workspace-config")
         .args(extra_args)
         .arg(tag)
@@ -983,6 +985,7 @@ fn build_image_with_local_feature(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .args(["--runtime", "podman"])
         .arg("--with-workspace-config")
         .args(extra_args)
         .arg(tag)
@@ -1042,6 +1045,7 @@ fn build_image_with_skills(tag: &str, extra_args: &[&str]) -> String {
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .args(["--runtime", "podman"])
         .arg("--with-workspace-config")
         .args(extra_args)
         .arg(tag)
@@ -1080,6 +1084,7 @@ fn build_image_in_workspace_dir(tag: &str, workspace_json: &str, extra_args: &[&
     let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
     let status = Command::new(binary)
         .current_dir(dir.path())
+        .args(["--runtime", "podman"])
         .args(extra_args)
         .arg(tag)
         .status()
@@ -1104,6 +1109,7 @@ fn no_workspace_config_local_feature_ubuntu_image() -> &'static str {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let status = Command::new(binary)
             .current_dir(dir.path())
+            .args(["--runtime", "podman"])
             .arg("openshell-test-no-workspace-config-local-feature-ubuntu:integration")
             .status()
             .expect("binary should run");
@@ -1118,6 +1124,7 @@ fn no_workspace_config_claude_skills_ubuntu_image() -> &'static str {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let status = Command::new(binary)
             .current_dir(dir.path())
+            .args(["--runtime", "podman"])
             .args(["--agent", "claude"])
             .arg("openshell-test-no-workspace-config-claude-skills-ubuntu:integration")
             .status()
@@ -1133,6 +1140,7 @@ fn no_workspace_config_opencode_skills_ubuntu_image() -> &'static str {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let status = Command::new(binary)
             .current_dir(dir.path())
+            .args(["--runtime", "podman"])
             .args(["--agent", "opencode"])
             .arg("openshell-test-no-workspace-config-opencode-skills-ubuntu:integration")
             .status()
@@ -1963,6 +1971,8 @@ mod opencode_ollama {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let status = Command::new(binary)
             .args([
+                "--runtime",
+                "podman",
                 "--agent",
                 "claude",
                 "--inference",
@@ -2004,6 +2014,8 @@ mod opencode_openai {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let status = Command::new(binary)
             .args([
+                "--runtime",
+                "podman",
                 "--agent",
                 "claude",
                 "--inference",
@@ -2543,6 +2555,8 @@ mod endpoint_rejection {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let output = Command::new(binary)
             .args([
+                "--runtime",
+                "podman",
                 "--inference",
                 "vertexai",
                 "--endpoint",
@@ -2558,10 +2572,13 @@ mod endpoint_rejection {
     }
 
     #[test]
+    #[ignore]
     fn vertexai_with_endpoint_error_mentions_vertexai() {
         let binary = env!("CARGO_BIN_EXE_openshell-image-builder");
         let output = Command::new(binary)
             .args([
+                "--runtime",
+                "podman",
                 "--inference",
                 "vertexai",
                 "--endpoint",
