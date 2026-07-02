@@ -14,6 +14,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::path::Path;
+
 use serde::Deserialize;
 
 /// The structure of the images-to-mount YAML file.
@@ -30,16 +32,23 @@ struct ImageMountFile {
 /// The name is the last path component with any `.yaml` or `.yml` extension
 /// stripped. For example `/some/path/curl.yaml` → `"curl"`.
 pub fn mount_name(path_or_url: &str) -> Option<String> {
-    let last = path_or_url.rsplit('/').next()?;
+    // For URLs (which always use '/'), extract the last '/'-delimited segment.
+    // For local filesystem paths, delegate to std::path::Path so that the
+    // OS-native separator (e.g. '\' on Windows) is handled correctly.
+    let last = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+        path_or_url.rsplit('/').next()?.to_string()
+    } else {
+        Path::new(path_or_url)
+            .file_name()?
+            .to_string_lossy()
+            .into_owned()
+    };
     let stem = last
         .strip_suffix(".yaml")
         .or_else(|| last.strip_suffix(".yml"))
-        .unwrap_or(last);
-    if stem.is_empty() {
-        None
-    } else {
-        Some(stem.to_string())
-    }
+        .unwrap_or(&last)
+        .to_string();
+    if stem.is_empty() { None } else { Some(stem) }
 }
 
 fn load_yaml_content(path_or_url: &str) -> Result<String, Box<dyn std::error::Error>> {
