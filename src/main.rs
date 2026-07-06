@@ -252,6 +252,17 @@ fn run(
         .iter()
         .map(|path_or_url| image_mount::load_init(path_or_url))
         .collect::<Result<_, _>>()?;
+    let mut seen_names = std::collections::HashSet::new();
+    for path_or_url in image_mounts {
+        if let Some(name) = image_mount::mount_name(path_or_url)
+            && !seen_names.insert(name.clone())
+        {
+            return Err(format!(
+                "--image-mount: duplicate mount name '{name}' derived from '{path_or_url}'"
+            )
+            .into());
+        }
+    }
     let output = containerfile::generate(
         &config,
         &containerfile::ContainerfileOptions {

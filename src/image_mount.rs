@@ -15,6 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -53,7 +54,11 @@ pub fn mount_name(path_or_url: &str) -> Option<String> {
 
 fn load_yaml_content(path_or_url: &str) -> Result<String, Box<dyn std::error::Error>> {
     if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
-        Ok(ureq::get(path_or_url).call()?.into_string()?)
+        let agent = ureq::AgentBuilder::new()
+            .timeout_read(Duration::from_secs(30))
+            .timeout_write(Duration::from_secs(30))
+            .build();
+        Ok(agent.get(path_or_url).call()?.into_string()?)
     } else {
         Ok(std::fs::read_to_string(path_or_url)?)
     }

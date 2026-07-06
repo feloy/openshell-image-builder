@@ -272,10 +272,12 @@ RUN groupadd -r supervisor && useradd -r -g supervisor -s /usr/sbin/nologin supe
 /// - Backslashes are doubled so printf does not interpret them as escape sequences.
 /// - Real newline characters are replaced with `\n` for printf to output as newlines.
 /// - Single quotes are escaped for the surrounding single-quoted shell string.
+/// - Percent signs are doubled so printf does not treat them as format specifiers.
 fn init_for_printf(init: &str) -> String {
     init.replace('\\', "\\\\")
         .replace('\n', "\\n")
         .replace('\'', "'\\''")
+        .replace('%', "%%")
 }
 
 fn final_stage(
@@ -1376,6 +1378,30 @@ mod tests {
         assert!(
             content.contains("export X='\\''hello'\\''"),
             "single quotes in init must be escaped for shell"
+        );
+    }
+
+    #[test]
+    fn image_mount_init_percent_escaped() {
+        let inits = vec!["export DATE_FMT=%Y-%m-%d".to_string()];
+        let content = generate(
+            &ubuntu_config("24.04"),
+            &ContainerfileOptions {
+                agent: None,
+                features: &[],
+                with_agent_settings: false,
+                skill_names: &[],
+                env_vars: &HashMap::new(),
+                with_policy: false,
+                with_ca_certs: false,
+                image_mount_inits: &inits,
+            },
+        )
+        .unwrap();
+        // % must be doubled so printf does not treat it as a format specifier
+        assert!(
+            content.contains("export DATE_FMT=%%Y-%%m-%%d"),
+            "percent signs in init must be doubled for printf"
         );
     }
 
