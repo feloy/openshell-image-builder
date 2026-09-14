@@ -130,19 +130,15 @@ jobs:
             exit 1
           fi
 
-      - name: Clippy
-        run: cargo clippy --workspace --features vm -- -D warnings
+      - name: Clippy and test
+        run: make check-vm
 
-      - name: Test
-        run: cargo test --workspace --features vm
-
-      - name: Verify the hypervisor entitlement applies
-        run: |
-          cargo build --features vm
-          codesign --sign - --entitlements entitlements.plist --force \
-            target/debug/openshell-image-builder
-          codesign -d --entitlements :- target/debug/openshell-image-builder | \
-            grep -q "com.apple.security.hypervisor"
+      # `make build-vm` signs what it builds and fails if the entitlement did not
+      # apply, so this covers the signing path a release depends on. With no
+      # tarball in the working copy it also covers building with no rootfs
+      # embedded, which is what every non-release build does.
+      - name: Build, sign, and check the entitlement
+        run: make build-vm
 
   # The VM boots from a Linux rootfs with buildah installed. Building it needs
   # podman on native arm64, which the macOS runners do not have.
@@ -164,7 +160,7 @@ jobs:
       # artifact format: upload-artifact zips its input, which drops symlinks
       # and the executable bit — both of which a bootable rootfs needs.
       - name: Build VM rootfs
-        run: ./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs ./vm-rootfs.tar
+        run: make build-vm-rootfs
 
       - name: Upload rootfs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -226,35 +222,22 @@ jobs:
         with:
           name: vm-rootfs
 
-      # Embedded rather than passed with --vm-rootfs, so that this job proves
-      # what a released binary actually does: unpack its own rootfs and boot
-      # from it, with no rootfs on the machine to fall back on. The compile
-      # guard above builds without the variable and so covers the other path.
-      - name: Build binary
-        run: cargo build --release --features vm
-        env:
-          OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE: ${{ github.workspace }}/vm-rootfs.tar
-
-      # Hypervisor.framework refuses a process whose signature lacks the
-      # entitlement, so this is not optional — without it the VM never boots.
-      - name: Sign binary
-        run: |
-          codesign --sign - --entitlements entitlements.plist --force \
-            target/release/openshell-image-builder
+      # `make build-vm` embeds the tarball downloaded above, because it sits in the
+      # working copy, and signs the result. The job therefore proves what a
+      # released binary does: unpack its own rootfs and boot from it, with no
+      # rootfs on the machine to fall back on. The compile guard above has no
+      # tarball to find and so covers the other path.
+      - name: Build and sign binary
+        run: make build-vm
 
       - name: Build an image in the VM
-        run: |
-          ./target/release/openshell-image-builder \
-            --runtime vm \
-            --vm-output ./openshell-vm-test.tar \
-            -v \
-            openshell-vm-test:integration
+        run: make run-vm TAG=openshell-vm-test:integration ARGS=-v
 
       - name: Verify the exported rootfs
         run: |
-          test -s ./openshell-vm-test.tar
+          test -s ./target/openshell-vm-test-integration.tar
           mkdir -p "$RUNNER_TEMP/vm-rootfs-check"
-          tar -xf ./openshell-vm-test.tar -C "$RUNNER_TEMP/vm-rootfs-check" ./etc/passwd
+          tar -xf ./target/openshell-vm-test-integration.tar -C "$RUNNER_TEMP/vm-rootfs-check" ./etc/passwd
           # The generated Containerfile always creates the sandbox user the
           # agent runs as, so its absence means the build produced the wrong
           # filesystem rather than merely an empty one.
@@ -269,5 +252,5 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf ./vm-rootfs.tar ./openshell-vm-test.tar "$RUNNER_TEMP/vm-rootfs-check"
+          rm -rf ./vm-rootfs.tar ./target/openshell-vm-test-integration.tar "$RUNNER_TEMP/vm-rootfs-check"
           rm -rf "$HOME/Library/Application Support/openshell-image-builder/vm-rootfs"
