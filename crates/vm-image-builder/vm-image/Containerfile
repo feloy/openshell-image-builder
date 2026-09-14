@@ -16,10 +16,13 @@
 
 # Root filesystem for the build microVM. This is not the image being built —
 # it is the Linux userspace the VM boots into to run buildah.
-FROM alpine:edge
+#
+# A release branch, so a rebuild cannot pull a different buildah. Bump it
+# deliberately.
+FROM alpine:3.24
 
 # buildah lives in the community repo, which is not enabled in the base image.
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \
+RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.24/community" >> /etc/apk/repositories && \
     apk add --no-cache buildah netavark
 
 # virtiofs does not support overlayfs, so tell buildah to use vfs instead.
