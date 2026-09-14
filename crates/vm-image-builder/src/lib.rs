@@ -623,27 +623,31 @@ pub fn build(
 /// between would invalidate an earlier answer.
 ///
 /// Off macOS there is nothing to check: the libkrun backend does not run there.
-/// If the thread count cannot be read, this returns `Ok(())` rather than
-/// blocking a build over a failed introspection call.
+///
+/// A thread count that cannot be read fails the build rather than passing. The
+/// check is what makes the fork sound, so treating an unreadable count as
+/// "single-threaded" would hand back exactly the silent hang it exists to
+/// prevent. Reading it is a `proc_pidinfo` call against our own pid, so an
+/// error here means something is wrong that a build should not run through.
 ///
 /// # Errors
 ///
 /// Returns [`VmBuildError::MultiThreaded`] if the process has more than one
-/// thread.
+/// thread, or [`VmBuildError::Io`] if the thread count cannot be read.
 pub fn check_single_threaded() -> Result<(), VmBuildError> {
     #[cfg(target_os = "macos")]
-    if let Some(threads) = host_thread_count()
-        && threads > 1
     {
-        return Err(VmBuildError::MultiThreaded { threads });
+        let threads = host_thread_count().map_err(VmBuildError::Io)?;
+        if threads > 1 {
+            return Err(VmBuildError::MultiThreaded { threads });
+        }
     }
     Ok(())
 }
 
-/// Returns the number of threads in this process, or `None` if it cannot be
-/// determined.
+/// Returns the number of threads in this process.
 #[cfg(target_os = "macos")]
-fn host_thread_count() -> Option<usize> {
+fn host_thread_count() -> std::io::Result<usize> {
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
     // SAFETY: `info` is a live, correctly sized out-parameter for
@@ -657,9 +661,17 @@ fn host_thread_count() -> Option<usize> {
             size,
         )
     };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     // A short read means the struct was not filled in; anything less than a
     // full write leaves `pti_threadnum` untrustworthy.
-    (ret == size).then(|| info.pti_threadnum.max(0) as usize)
+    if ret != size {
+        return Err(std::io::Error::other(format!(
+            "proc_pidinfo(PROC_PIDTASKINFO) wrote {ret} bytes, expected {size}"
+        )));
+    }
+    Ok(info.pti_threadnum.max(0) as usize)
 }
 
 /// Writes `containerfile` into `context_dir` as [`CONTAINERFILE_NAME`].

@@ -47,6 +47,7 @@ DYLD_LIBRARY_PATH="$(brew --prefix)/lib" \
 The result is a tarball, not an image in a local store — `./myimage-latest.tar` by default, or the path given to `--vm-output`. Check it the way CI does:
 
 ```bash
+mkdir -p /tmp/check
 tar -xf ./myimage-latest.tar -C /tmp/check ./etc/passwd
 grep '^sandbox:' /tmp/check/etc/passwd
 ```

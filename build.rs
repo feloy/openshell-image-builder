@@ -79,6 +79,7 @@ fn main() {
     );
 
     let compressed = if contents.starts_with(&ZSTD_MAGIC) {
+        verify_frame(&contents, &archive);
         contents
     } else {
         compress(&contents, &archive)
@@ -115,6 +116,25 @@ fn compress(contents: &[u8], archive: &std::path::Path) -> Vec<u8> {
     );
 
     compressed
+}
+
+/// Checks that an archive that arrived already compressed decodes as a whole
+/// zstd frame.
+///
+/// The magic bytes only identify the first four bytes of a frame. Embedding on
+/// that alone would let a truncated or corrupt archive through the build and
+/// surface as a failed extraction on a user's machine, which is exactly what
+/// [`compress`] verifies against for an archive this script compresses itself.
+fn verify_frame(contents: &[u8], archive: &std::path::Path) {
+    let mut decoded = Vec::new();
+    zstd::Decoder::new(contents)
+        .and_then(|mut decoder| decoder.read_to_end(&mut decoded))
+        .unwrap_or_else(|e| panic!("verify compressed {}: {e}", archive.display()));
+    assert!(
+        !decoded.is_empty(),
+        "compressed {} decompresses to nothing",
+        archive.display()
+    );
 }
 
 /// Writes the empty files `src/vm_rootfs.rs` includes when no archive was
