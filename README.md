@@ -89,43 +89,38 @@ tar -xf myimage-latest.tar -C /path/to/rootfs
 
 ### Requirements
 
-`--runtime vm` works only on **macOS with Apple Silicon**, because libkrun builds on Apple's Hypervisor.framework. It also needs both of the following, and reports which one is missing if you run without them:
+`--runtime vm` works only on **macOS with Apple Silicon**, because libkrun builds on Apple's Hypervisor.framework. It also needs:
 
-1. **A binary built with the `vm` feature.** It is off by default, since enabling it links against libkrun:
+1. **libkrun**, which the binary links against rather than bundling:
 
    ```sh
    brew tap libkrun/krun && brew trust libkrun/krun
-   brew install libkrun/krun/libkrun llvm pkgconf
-   export LIBCLANG_PATH="$(brew --prefix)/opt/llvm/lib"
-   export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"
-   cargo build --release --features vm
+   brew install libkrun/krun/libkrun
    ```
 
-2. **The hypervisor entitlement.** macOS denies Hypervisor.framework to any process whose signature lacks it, so the binary must be signed with `entitlements.plist`. Re-sign after every rebuild — building clears the signature:
+   If a build fails with `Couldn't find or load libkrunfw`, add `export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"`.
+
+2. **A binary built with the `vm` feature and signed for the hypervisor.** The `aarch64-apple-darwin` download from a release has both. To build one yourself:
 
    ```sh
-   codesign --sign - --entitlements entitlements.plist --force \
-     target/release/openshell-image-builder
+   make build-vm
    ```
 
-The VM's own root filesystem — a Linux tree with `buildah` in it — comes with the binary. A release build carries one and unpacks it on first use, into `~/Library/Application Support/openshell-image-builder/vm-rootfs`; later runs reuse it, and a build of a different version replaces it.
+   The feature is off by default because it links against libkrun, and macOS refuses the hypervisor to an unsigned binary. `make build-vm` does both, and re-signs on every build, since compiling clears the signature.
+
+The VM's own root filesystem — a Linux tree with `buildah` in it — comes inside the binary and unpacks itself on first use, into `~/Library/Application Support/openshell-image-builder/vm-rootfs`.
 
 ### Building the VM's root filesystem
 
-Only needed to change what the build VM contains, or to embed one in a binary you build yourself. The script needs Podman on a `linux/arm64` machine, and writes the directory, the tarball, or both:
+Only needed to change what the build VM contains. It takes Podman on a `linux/arm64` machine:
 
 ```sh
-./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs ./vm-rootfs.tar
+make build-vm-rootfs                  # writes vm-rootfs/ and vm-rootfs.tar
+make build-vm                         # embeds the tarball in the binary
+make run-vm TAG=myimage:latest        # builds an image with it
 ```
 
-Run against it directly with `--vm-rootfs ./vm-rootfs`, which overrides the embedded one, or embed the tarball:
-
-```sh
-OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE=$PWD/vm-rootfs.tar \
-  cargo build --release --features vm
-```
-
-A build without that variable embeds nothing and says so on `--runtime vm`, which leaves `--vm-rootfs` as the only way to supply one.
+Or point at the directory without embedding anything: `--vm-rootfs ./vm-rootfs`. `make help` lists the rest.
 
 ### Sizing the VM
 
