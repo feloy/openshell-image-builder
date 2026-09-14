@@ -24,6 +24,17 @@
   lacks com.apple.security.hypervisor, so a binary signed without these
   entitlements fails at VM start rather than at build time.
 
+  The other two matter only under the hardened runtime, which notarized
+  release binaries are signed with:
+
+  - disable-library-validation lets the process load libkrun, which Homebrew
+    signed with a different Team ID. Without it the binary does not start at
+    all, since libkrun is linked rather than opened on demand.
+
+  - allow-dyld-environment-variables keeps DYLD_LIBRARY_PATH from being
+    stripped. libkrun opens its kernel, libkrunfw, by name at run time, and
+    nothing else points it at Homebrew's directory.
+
   Builds without the "vm" feature do not need this file.
 
   Note: XML forbids a double hyphen inside a comment, so flag names are
@@ -32,6 +43,10 @@
 <plist version="1.0">
 <dict>
     <key>com.apple.security.hypervisor</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
 </dict>
 </plist>
