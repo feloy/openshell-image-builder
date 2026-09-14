@@ -26,9 +26,9 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repo
 RUN mkdir -p /etc/containers && \
     printf '[storage]\ndriver = "vfs"\n' > /etc/containers/storage.conf
 
-# The libkrun TSI network backend proxies all inet connections through the host,
-# but the guest still needs /etc/resolv.conf to point to a reachable nameserver.
-# Loopback addresses (127.0.0.53 from systemd-resolved) are not routable via TSI.
+# TSI has no DHCP, so the guest needs a resolv.conf of its own. vm-build
+# replaces this at boot with the host's nameservers; it is only the fallback for
+# when the host has none that the guest could reach.
 RUN echo "nameserver 1.1.1.1" > /etc/resolv.conf
 
 # Build helper invoked by the host process inside the microVM.

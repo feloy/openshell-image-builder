@@ -57,11 +57,21 @@ STORAGE_MB=$((MEM_KB * 3 / 4 / 1024))
 mkdir -p /var/lib/containers
 mount -t tmpfs -o size="${STORAGE_MB}m" tmpfs /var/lib/containers
 
-# buildah writes lock files under /run/containers, which sits on the
-# virtiofs-mounted rootfs and persists between VM runs. Mount a tmpfs
-# there so each run starts with a clean state.
+# /run is on the virtiofs-mounted rootfs, which persists between runs and is
+# shared by concurrent builds. Give each run its own, so buildah's lock files
+# and the resolv.conf below stay out of it.
+mount -t tmpfs tmpfs /run
 mkdir -p /run/containers
-mount -t tmpfs tmpfs /run/containers
+
+# The host passes its own nameservers here, since no fixed address works
+# everywhere. Empty is fine: the rootfs ships a public resolver as a fallback.
+# Bind-mounted rather than written, because /etc is on the shared rootfs.
+if [ -n "$OPENSHELL_VM_DNS" ]; then
+    for ns in $OPENSHELL_VM_DNS; do
+        echo "nameserver $ns"
+    done > /run/resolv.conf
+    mount -o bind /run/resolv.conf /etc/resolv.conf
+fi
 
 # buildah uses /var/tmp for temporary blob files during image pulls.
 # Keeping this on the virtiofs-mounted rootfs opens a host-side fd for

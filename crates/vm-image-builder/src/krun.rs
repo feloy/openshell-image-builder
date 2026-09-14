@@ -45,7 +45,9 @@ use krun_sys::{
     krun_set_workdir, krun_start_enter,
 };
 
-use crate::{TAG_CONTEXT, TAG_OUTPUT, TAG_ROOT, VM_BUILD_SCRIPT, VmBuild, VmBuildError};
+use crate::{
+    TAG_CONTEXT, TAG_OUTPUT, TAG_ROOT, VM_BUILD_SCRIPT, VM_DNS_ENV, VmBuild, VmBuildError,
+};
 
 /// Child exit code when VM configuration failed before boot.
 const EXIT_SETUP_FAILED: i32 = 119;
@@ -175,7 +177,11 @@ fn enter_vm(args: &Args, cpus: u8, memory_mib: u32) -> i32 {
                     args.output_filename.as_ptr(),
                     ptr::null(),
                 ];
-                let envp: [*const c_char; 2] = [args.path_env.as_ptr(), ptr::null()];
+                // A null in the middle terminates the list, so a build with no
+                // nameservers simply passes PATH alone and the guest keeps
+                // whatever resolv.conf its rootfs came with.
+                let dns = args.dns_env.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+                let envp: [*const c_char; 3] = [args.path_env.as_ptr(), dns, ptr::null()];
                 (
                     "krun_set_exec",
                     krun_set_exec(ctx, args.exec.as_ptr(), argv.as_ptr(), envp.as_ptr()),
@@ -215,6 +221,8 @@ struct Args {
     workdir: CString,
     exec: CString,
     path_env: CString,
+    /// `OPENSHELL_VM_DNS=…`, absent when the build carries no nameservers.
+    dns_env: Option<CString>,
 }
 
 impl Args {
@@ -232,6 +240,10 @@ impl Args {
             workdir: cstring("/", "workdir")?,
             exec: cstring(VM_BUILD_SCRIPT, "build helper")?,
             path_env: cstring(VM_PATH, "PATH")?,
+            dns_env: build
+                .dns_env_value()
+                .map(|value| cstring(&format!("{VM_DNS_ENV}={value}"), "VM nameservers"))
+                .transpose()?,
         })
     }
 }

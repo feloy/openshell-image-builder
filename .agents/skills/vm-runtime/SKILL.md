@@ -63,6 +63,18 @@ Later runs reuse the unpacked copy. It is re-unpacked when the version changes, 
 
 A binary built **without** `OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE` embeds nothing, so a plain `cargo build --features vm` has no rootfs to fall back on and needs `--vm-rootfs`.
 
+### Know how the guest resolves names
+
+libkrun's TSI network mode gives the guest no NIC, so there is no DHCP to hand it a `resolv.conf`, and a query reaches whatever nameserver the guest was told to use — the host's resolver settings never apply, only its routing and firewall rules. A fixed public resolver would therefore fail behind a firewall that allows DNS only to the site's resolver, and would be blind to internal names.
+
+In order:
+
+1. `--vm-dns <ADDR>` if passed, repeatable — always wins, and a loopback or link-local address is rejected.
+2. Otherwise the host's own nameservers, read on every run by `dns::default_nameservers` (`scutil --dns`, then `/etc/resolv.conf`), minus the ones the guest cannot reach.
+3. Otherwise `1.1.1.1`, the fallback the rootfs also ships.
+
+They travel in `OPENSHELL_VM_DNS` (space-separated) through `krun_set_exec`'s `envp`; `vm-build` turns them into a `resolv.conf` on tmpfs and bind-mounts it over `/etc/resolv.conf`. It is never written into the rootfs — that is a cache directory shared by concurrent builds, and the embedded one is fixed at compile time. `-vv` logs what was discovered.
+
 ### Change what is inside the build VM
 
 Edit `crates/vm-image-builder/vm-image/Containerfile` (what the VM contains) or `vm-build` (what runs inside it), then rebuild the rootfs. **The script needs Podman on a `linux/arm64` machine** — it does not run on an Intel host, and on macOS it needs a running `podman machine`.
@@ -109,6 +121,8 @@ cargo clippy --workspace --features vm -- -D warnings && cargo test --workspace 
 | `failed to run custom build command for krun-sys` / `Library not loaded: @rpath/libclang.dylib` | bindgen cannot load libclang | Set `LIBCLANG_PATH` **and** `DYLD_FALLBACK_LIBRARY_PATH` as shown above |
 | The build dies out of memory inside the VM | `buildah` uses the `vfs` storage driver, which copies every layer | Raise `--vm-memory` (default 4096) |
 | `cannot start a VM from a process with N threads` | `KrunRunner::run` forks; that is only safe single-threaded | Do not spawn threads before the build |
+| `--vm-dns <addr> cannot be reached from inside the VM` | A loopback or link-local address means the VM, not the host | Pass the address the host's local resolver forwards to |
+| A `FROM` or `RUN` in the VM cannot resolve a name the host resolves fine | The host's nameservers were not usable, so the VM fell back to `1.1.1.1` | Run with `-vv` to see which were discovered; pass `--vm-dns` |
 
 ## Where the code lives
 
@@ -118,6 +132,7 @@ cargo clippy --workspace --features vm -- -D warnings && cargo test --workspace 
 | `src/vm_rootfs.rs` | Unpacking the embedded rootfs, and its cache |
 | `build.rs` | Compressing that rootfs into the binary at build time |
 | `crates/vm-image-builder/src/lib.rs` | `VmConfig`, `VmBuild`, `build()`, the `VmRunner` trait, `VmBuildError` |
+| `crates/vm-image-builder/src/dns.rs` | Discovering the host's nameservers to give the guest |
 | `crates/vm-image-builder/src/krun.rs` | The libkrun FFI calls, behind the `krun` feature |
 | `crates/vm-image-builder/vm-image/Containerfile` | What the build VM contains |
 | `crates/vm-image-builder/vm-image/vm-build` | What runs inside the VM |

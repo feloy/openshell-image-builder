@@ -134,6 +134,20 @@ openshell-image-builder \
   myimage:latest
 ```
 
+### DNS inside the VM
+
+The VM has no virtual network card: libkrun forwards its connections to the host, which makes them for real. Nothing supplies the guest a `resolv.conf`, and a lookup still travels to whatever nameserver the guest is told to use — the host's resolver settings do not apply to it, only the host's routing and firewall rules.
+
+So the build reads the host's own nameservers on each run and hands them to the VM. That is what makes a build work behind a firewall that only allows DNS to the company resolver, and what lets a `FROM` line reach a registry mirror that only internal DNS knows about.
+
+Override it when the host's resolvers are not the ones the build should use:
+
+```sh
+openshell-image-builder --runtime vm --vm-dns 10.0.0.53 --vm-dns 10.0.0.54 myimage:latest
+```
+
+A loopback address is rejected: inside the VM, loopback is the VM. If the host resolves through one — systemd-resolved, a VPN client's local stub — pass the address it forwards to instead. When the host has no usable nameserver at all, the VM falls back to `1.1.1.1`.
+
 ## Configuring the base image
 
 To use a different base image or tag, create a configuration file.
@@ -650,9 +664,10 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--vm-output <FILE>`           | Path for the rootfs tarball produced by `--runtime vm`. Defaults to a name derived from `<TAG>` in the current directory. |
 | `--vm-cpus <N>`                | vCPUs given to the build VM (`--runtime vm` only). Default `2`.     |
 | `--vm-memory <MIB>`            | RAM in MiB given to the build VM (`--runtime vm` only). Default `4096`. |
+| `--vm-dns <ADDR>`              | Nameserver the build VM resolves through (`--runtime vm` only). Repeatable. Defaults to the host's own nameservers. |
 | `-v` / `-vv`                   | Increase log verbosity (info / debug)                              |
 
-The four `--vm-*` options are rejected with any other `--runtime`, rather than silently ignored.
+The five `--vm-*` options are rejected with any other `--runtime`, rather than silently ignored.
 
 ## Examples
 

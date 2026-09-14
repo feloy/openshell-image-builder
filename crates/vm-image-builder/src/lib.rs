@@ -83,7 +83,10 @@
 //! [libkrun]: https://github.com/containers/libkrun
 //! [virtio-fs]: https://virtio-fs.gitlab.io/
 
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+
+pub mod dns;
 
 #[cfg(all(feature = "krun", target_os = "macos", target_arch = "aarch64"))]
 mod krun;
@@ -119,6 +122,15 @@ pub const TAG_CONTEXT: &str = "openshell-context";
 /// [`VM_BUILD_SCRIPT`] helper.
 pub const TAG_OUTPUT: &str = "openshell-output";
 
+/// Environment variable through which [`VM_BUILD_SCRIPT`] is given the
+/// nameservers for the guest's `/etc/resolv.conf`, space-separated. Like
+/// [`TAG_CONTEXT`], part of the contract with that script.
+///
+/// It goes through the environment, not into the rootfs: the rootfs is a cache
+/// directory shared by every build, and the embedded one is fixed at compile
+/// time. See [`dns`] for why the value cannot be a constant.
+pub const VM_DNS_ENV: &str = "OPENSHELL_VM_DNS";
+
 // ---------------------------------------------------------------------------
 // VmConfig
 // ---------------------------------------------------------------------------
@@ -133,11 +145,19 @@ pub struct VmConfig {
     pub cpus: u8,
     /// RAM in MiB.
     pub memory_mib: u32,
+    /// Nameservers written into the guest's `/etc/resolv.conf`.
+    ///
+    /// Empty leaves whatever the rootfs already has. See [`dns`] for how the
+    /// default is arrived at and why it is not a constant.
+    pub nameservers: Vec<IpAddr>,
 }
 
 impl VmConfig {
-    /// Creates a config for `rootfs` with [`DEFAULT_CPUS`] and
-    /// [`DEFAULT_MEMORY_MIB`].
+    /// Creates a config for `rootfs` with [`DEFAULT_CPUS`],
+    /// [`DEFAULT_MEMORY_MIB`], and the host's nameservers.
+    ///
+    /// Reads the host's resolver configuration, so call it once per run rather
+    /// than in a loop.
     ///
     /// # Examples
     ///
@@ -148,12 +168,14 @@ impl VmConfig {
     /// let config = VmConfig::new(Path::new("/tmp/rootfs"));
     /// assert_eq!(config.cpus, DEFAULT_CPUS);
     /// assert_eq!(config.memory_mib, DEFAULT_MEMORY_MIB);
+    /// assert!(!config.nameservers.is_empty());
     /// ```
     pub fn new(rootfs: &Path) -> Self {
         VmConfig {
             rootfs: rootfs.to_path_buf(),
             cpus: DEFAULT_CPUS,
             memory_mib: DEFAULT_MEMORY_MIB,
+            nameservers: dns::default_nameservers(),
         }
     }
 
@@ -230,9 +252,43 @@ pub struct VmBuild {
     pub cpus: u8,
     /// RAM in MiB.
     pub memory_mib: u32,
+    /// Nameservers the guest writes into its `/etc/resolv.conf`, empty to leave
+    /// the rootfs's own.
+    pub nameservers: Vec<IpAddr>,
 }
 
 impl VmBuild {
+    /// Returns the value of [`VM_DNS_ENV`] for this build, or `None` when there
+    /// are no nameservers to hand over.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::path::PathBuf;
+    /// # use vm_image_builder::VmBuild;
+    /// # fn vm_build(nameservers: Vec<std::net::IpAddr>) -> VmBuild {
+    /// #     VmBuild {
+    /// #         rootfs: PathBuf::from("/rootfs"),
+    /// #         context: PathBuf::from("/ctx"),
+    /// #         output_dir: PathBuf::from("/out"),
+    /// #         output_filename: "out.tar".to_string(),
+    /// #         tag: "t:latest".to_string(),
+    /// #         cpus: 2,
+    /// #         memory_mib: 4096,
+    /// #         nameservers,
+    /// #     }
+    /// # }
+    /// let build = vm_build(vec!["10.0.0.1".parse().unwrap(), "8.8.8.8".parse().unwrap()]);
+    /// assert_eq!(build.dns_env_value().as_deref(), Some("10.0.0.1 8.8.8.8"));
+    /// assert_eq!(vm_build(vec![]).dns_env_value(), None);
+    /// ```
+    pub fn dns_env_value(&self) -> Option<String> {
+        if self.nameservers.is_empty() {
+            return None;
+        }
+        Some(dns::join(&self.nameservers))
+    }
+
     /// Returns the path the Containerfile has *inside* the VM.
     ///
     /// [`build`] always writes the Containerfile into the build context, so it
@@ -251,6 +307,7 @@ impl VmBuild {
     /// #     tag: "t:latest".to_string(),
     /// #     cpus: 2,
     /// #     memory_mib: 4096,
+    /// #     nameservers: vec![],
     /// # };
     /// assert_eq!(build.containerfile_vm_path(), "/build/context/Containerfile");
     /// ```
@@ -530,13 +587,15 @@ pub fn build(
         tag: tag.to_string(),
         cpus: config.cpus,
         memory_mib: config.memory_mib,
+        nameservers: config.nameservers.clone(),
     };
 
     log::debug!(
-        "building '{}' in a microVM ({} vCPUs, {} MiB): context={} rootfs={} output={}",
+        "building '{}' in a microVM ({} vCPUs, {} MiB, dns=[{}]): context={} rootfs={} output={}",
         build.tag,
         build.cpus,
         build.memory_mib,
+        dns::join(&build.nameservers),
         build.context.display(),
         build.rootfs.display(),
         build.output_path().display(),
@@ -651,6 +710,10 @@ mod tests {
     const CONTAINERFILE: &str = "FROM scratch";
     const TAG: &str = "test:latest";
 
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
     /// Captures the `VmBuild` it is handed so tests can assert on it.
     struct CaptureRunner(Mutex<Option<VmBuild>>);
 
@@ -708,6 +771,10 @@ mod tests {
         assert_eq!(config.rootfs, PathBuf::from("/tmp/rootfs"));
         assert_eq!(config.cpus, DEFAULT_CPUS);
         assert_eq!(config.memory_mib, DEFAULT_MEMORY_MIB);
+        // Whatever this host resolves through, the guest gets something usable
+        // rather than the rootfs's baked-in fallback.
+        assert!(!config.nameservers.is_empty());
+        assert!(config.nameservers.iter().all(dns::is_reachable_from_vm));
     }
 
     // --- VmConfig::check_rootfs ---
@@ -861,6 +928,7 @@ mod tests {
             rootfs: fake_rootfs(tmp.path()),
             cpus: 8,
             memory_mib: 16384,
+            nameservers: vec![ip("10.0.0.1")],
         };
 
         let runner = CaptureRunner::new();
@@ -877,6 +945,53 @@ mod tests {
         let captured = runner.captured();
         assert_eq!(captured.cpus, 8);
         assert_eq!(captured.memory_mib, 16384);
+        assert_eq!(captured.nameservers, vec![ip("10.0.0.1")]);
+    }
+
+    // --- VmBuild::dns_env_value ---
+
+    #[test]
+    fn dns_env_value_is_the_space_separated_list() {
+        let tmp = tempdir();
+        let config = VmConfig {
+            rootfs: fake_rootfs(tmp.path()),
+            cpus: DEFAULT_CPUS,
+            memory_mib: DEFAULT_MEMORY_MIB,
+            nameservers: vec![ip("192.168.1.254"), ip("fd0f:ee:b0::1")],
+        };
+
+        let runner = CaptureRunner::new();
+        build(
+            CONTAINERFILE,
+            TAG,
+            &config,
+            &runner,
+            tmp.path(),
+            &tmp.path().join("out.tar"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.captured().dns_env_value().as_deref(),
+            Some("192.168.1.254 fd0f:ee:b0::1")
+        );
+    }
+
+    #[test]
+    fn dns_env_value_is_absent_without_nameservers() {
+        // The guest then keeps the resolv.conf its rootfs shipped with, rather
+        // than being handed an empty one that resolves nothing.
+        let build = VmBuild {
+            rootfs: PathBuf::from("/rootfs"),
+            context: PathBuf::from("/ctx"),
+            output_dir: PathBuf::from("/out"),
+            output_filename: "out.tar".to_string(),
+            tag: TAG.to_string(),
+            cpus: 2,
+            memory_mib: 4096,
+            nameservers: vec![],
+        };
+        assert_eq!(build.dns_env_value(), None);
     }
 
     #[test]
@@ -980,6 +1095,7 @@ mod tests {
             tag: TAG.to_string(),
             cpus: 2,
             memory_mib: 4096,
+            nameservers: vec![],
         };
         assert_eq!(build.output_path(), PathBuf::from("/out/image.tar"));
     }
@@ -1054,6 +1170,7 @@ mod tests {
             tag: TAG.to_string(),
             cpus: 2,
             memory_mib: 4096,
+            nameservers: vec![],
         };
         let err = KrunRunner.run(&build).unwrap_err();
         assert!(matches!(err, VmBuildError::Unsupported(_)));

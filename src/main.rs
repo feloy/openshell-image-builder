@@ -26,6 +26,7 @@ mod vm_rootfs;
 mod workspace;
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 const BASE_POLICY_YAML: &str = include_str!("../assets/policy.yaml");
@@ -179,6 +180,13 @@ struct Cli {
         help = "RAM in MiB given to the build VM (--runtime vm only)."
     )]
     vm_memory: Option<u32>,
+    #[arg(
+        long = "vm-dns",
+        value_name = "ADDR",
+        help = "Nameserver the build VM resolves through (--runtime vm only). \
+                Repeatable. Defaults to the host's own nameservers."
+    )]
+    vm_dns: Vec<IpAddr>,
 }
 
 fn main() {
@@ -248,6 +256,7 @@ fn check_vm_flags(cli: &Cli) -> Result<(), String> {
         ("--vm-output", cli.vm_output.is_some()),
         ("--vm-cpus", cli.vm_cpus.is_some()),
         ("--vm-memory", cli.vm_memory.is_some()),
+        ("--vm-dns", !cli.vm_dns.is_empty()),
     ];
     match given.iter().find(|(_, present)| *present) {
         Some((flag, _)) => Err(format!("{flag} is only supported with --runtime vm")),
@@ -260,17 +269,23 @@ fn check_vm_flags(cli: &Cli) -> Result<(), String> {
 ///
 /// Without `--vm-rootfs` the VM boots from the rootfs embedded in this binary,
 /// unpacked on first use, so that `--runtime vm` needs nothing of the user
-/// beyond the binary itself.
+/// beyond the binary itself. Without `--vm-dns` it resolves through the host's
+/// own nameservers.
 ///
 /// # Errors
 ///
 /// Returns the reason the embedded rootfs could not be made available, when
-/// the caller passed no rootfs of their own.
+/// the caller passed no rootfs of their own, or the reason a `--vm-dns` address
+/// cannot be used.
 fn vm_config(
     rootfs: Option<PathBuf>,
     cpus: Option<u8>,
     memory: Option<u32>,
+    dns: &[IpAddr],
 ) -> Result<VmConfig, String> {
+    // Before the rootfs, which on a default run means unpacking the embedded
+    // one: a mistyped --vm-dns should not first cost 80 MiB of extraction.
+    let nameservers = vm_nameservers(dns)?;
     let rootfs = match rootfs {
         Some(rootfs) => rootfs,
         None => vm_rootfs::ensure_extracted()?,
@@ -279,7 +294,29 @@ fn vm_config(
         rootfs,
         cpus: cpus.unwrap_or(vm_image_builder::DEFAULT_CPUS),
         memory_mib: memory.unwrap_or(vm_image_builder::DEFAULT_MEMORY_MIB),
+        nameservers,
     })
+}
+
+/// Resolves the nameservers the VM uses: `--vm-dns` if given, the host's own
+/// otherwise.
+///
+/// An address the guest cannot reach is rejected rather than dropped — the
+/// user named it, so saying nothing would look like it had been honoured.
+fn vm_nameservers(dns: &[IpAddr]) -> Result<Vec<IpAddr>, String> {
+    if dns.is_empty() {
+        return Ok(vm_image_builder::dns::default_nameservers());
+    }
+    if let Some(addr) = dns
+        .iter()
+        .find(|addr| !vm_image_builder::dns::is_reachable_from_vm(addr))
+    {
+        return Err(format!(
+            "--vm-dns {addr} cannot be reached from inside the VM: a loopback or \
+             link-local address means the VM itself, not the host"
+        ));
+    }
+    Ok(dns.to_vec())
 }
 
 /// Derives the default tarball name for a VM build from the image tag.
@@ -331,7 +368,12 @@ fn select_runtime(cli: &Cli) -> Result<Selected, String> {
 /// host — or a build — where [`KrunRunner`] reports itself unsupported, which
 /// is every machine that is not an Apple Silicon Mac with the `vm` feature on.
 fn select_vm(cli: &Cli) -> Result<Selected, String> {
-    let config = vm_config(cli.vm_rootfs.clone(), cli.vm_cpus, cli.vm_memory)?;
+    let config = vm_config(
+        cli.vm_rootfs.clone(),
+        cli.vm_cpus,
+        cli.vm_memory,
+        &cli.vm_dns,
+    )?;
     config.check_rootfs().map_err(|e| e.to_string())?;
     let output = cli
         .vm_output
@@ -748,6 +790,10 @@ mod tests {
             std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         rootfs
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
     }
 
     /// Parses `args` as a full command line, with the binary name prepended.
@@ -1788,17 +1834,56 @@ mod tests {
 
     #[test]
     fn vm_config_uses_defaults_when_unset() {
-        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), None, None).unwrap();
+        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), None, None, &[]).unwrap();
         assert_eq!(config.rootfs, PathBuf::from("/tmp/rootfs"));
         assert_eq!(config.cpus, vm_image_builder::DEFAULT_CPUS);
         assert_eq!(config.memory_mib, vm_image_builder::DEFAULT_MEMORY_MIB);
+        // Discovered from this host, so only the invariant can be asserted.
+        assert!(!config.nameservers.is_empty());
     }
 
     #[test]
     fn vm_config_uses_the_given_resources() {
-        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), Some(8), Some(16384)).unwrap();
+        let dns = [ip("10.0.0.1"), ip("10.0.0.2")];
+        let config = vm_config(
+            Some(PathBuf::from("/tmp/rootfs")),
+            Some(8),
+            Some(16384),
+            &dns,
+        )
+        .unwrap();
         assert_eq!(config.cpus, 8);
         assert_eq!(config.memory_mib, 16384);
+        assert_eq!(config.nameservers, dns);
+    }
+
+    // --- vm_nameservers ---
+
+    #[test]
+    fn vm_nameservers_falls_back_to_the_host_when_unset() {
+        let nameservers = vm_nameservers(&[]).unwrap();
+        assert!(!nameservers.is_empty());
+        assert!(
+            nameservers
+                .iter()
+                .all(vm_image_builder::dns::is_reachable_from_vm)
+        );
+    }
+
+    #[test]
+    fn vm_nameservers_keeps_what_the_user_asked_for_in_order() {
+        let dns = [ip("8.8.8.8"), ip("192.168.1.254")];
+        assert_eq!(vm_nameservers(&dns).unwrap(), dns);
+    }
+
+    #[test]
+    fn vm_nameservers_rejects_an_address_the_guest_cannot_reach() {
+        // Silently dropping it would look like the flag had been honoured.
+        for addr in ["127.0.0.1", "::1", "169.254.1.1"] {
+            let err = vm_nameservers(&[ip(addr)]).unwrap_err();
+            assert!(err.contains(addr), "error was: {err}");
+            assert!(err.contains("--vm-dns"), "error was: {err}");
+        }
     }
 
     // Only the empty case is asserted here. Calling this on a binary that does
@@ -1811,9 +1896,18 @@ mod tests {
             return;
         }
 
-        let err = vm_config(None, None, None).expect_err("nothing is embedded to fall back to");
+        let err =
+            vm_config(None, None, None, &[]).expect_err("nothing is embedded to fall back to");
 
         assert!(err.contains("--vm-rootfs"), "error was: {err}");
+    }
+
+    #[test]
+    fn vm_config_rejects_bad_dns_before_resolving_the_rootfs() {
+        // The rootfs is the expensive half: on a default run it unpacks the
+        // embedded copy. A rejected flag must not pay for that first.
+        let err = vm_config(None, None, None, &[ip("127.0.0.1")]).unwrap_err();
+        assert!(err.contains("--vm-dns"), "error was: {err}");
     }
 
     #[test]
@@ -1825,10 +1919,41 @@ mod tests {
             "4",
             "--vm-memory",
             "8192",
+            "--vm-dns",
+            "10.0.0.1",
             "test:latest",
         ])
         .unwrap();
         assert!(check_vm_flags(&cli).is_ok());
+    }
+
+    #[test]
+    fn cli_accepts_repeated_vm_dns() {
+        let cli = parse_cli(&[
+            "--runtime",
+            "vm",
+            "--vm-dns",
+            "10.0.0.1",
+            "--vm-dns",
+            "fd00::1",
+            "test:latest",
+        ])
+        .unwrap();
+        assert_eq!(cli.vm_dns, vec![ip("10.0.0.1"), ip("fd00::1")]);
+    }
+
+    #[test]
+    fn cli_rejects_a_vm_dns_that_is_not_an_address() {
+        assert!(
+            parse_cli(&[
+                "--runtime",
+                "vm",
+                "--vm-dns",
+                "dns.example.com",
+                "test:latest"
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -1844,6 +1969,7 @@ mod tests {
             ("--vm-output", "out.tar"),
             ("--vm-cpus", "4"),
             ("--vm-memory", "8192"),
+            ("--vm-dns", "10.0.0.1"),
         ] {
             let cli = parse_cli(&["--runtime", "podman", flag, value, "test:latest"]).unwrap();
             let err = check_vm_flags(&cli).unwrap_err();
