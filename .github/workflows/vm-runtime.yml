@@ -19,8 +19,8 @@ name: VM Runtime
 # Covers `--runtime vm`, which pr-check.yml cannot: the `vm` feature is off by
 # default, so the libkrun FFI code is never compiled there.
 #
-# Prerequisites — one-time configuration required before the `build` and
-# `integration` jobs can run:
+# Prerequisites — one-time configuration required before the `integration`
+# job can run:
 #
 # 1. Self-hosted runner (Settings → Actions → Runners → New self-hosted runner)
 #    A bare-metal macOS arm64 machine with kern.hv_support=1 is required.
@@ -43,29 +43,30 @@ name: VM Runtime
 #    arbitrary code on the self-hosted machine — a cargo build alone is enough,
 #    since build scripts execute during it.
 #
-# Until both exist those two jobs stay queued; `build-rootfs` runs on a hosted
-# runner and is unaffected.
+# Until both exist that job stays queued; `build` and `build-rootfs` run on
+# hosted runners and are unaffected.
 #
-# Note on installing libkrun: the tap's libkrunfw formula declares no version,
-# so Homebrew infers "64" from the aarch64 in its URL and then looks for a
-# bottle filename that the tap does not publish. If a fresh install 404s on
-# libkrunfw, bypass the bottle with:
-#   brew install --build-from-source libkrun/krun/libkrunfw
-# That is why these jobs do not install libkrun themselves.
+# Note on installing libkrun: the tap declares `depends_on arch: :arm64` and
+# publishes libkrunfw bottles only for arm64_sequoia and arm64_tahoe. Anywhere
+# else Homebrew falls back to building from source, and building libkrunfw
+# means compiling a kernel. `build` therefore installs libkrun on the hosted
+# runner but fails if the install was not poured from a bottle, so that a
+# runner image the tap does not cover is reported rather than waited on.
 
 on:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  # Compile guard. Booting a VM is not needed to compile the FFI code, but
-  # libkrun must be present to link against — and installing it on a hosted
-  # runner is currently broken (see the note above), so this runs alongside
-  # the integration job on hardware that already has it.
+  # Compile guard. Booting a VM needs bare metal; compiling the FFI code only
+  # needs libkrun to link against, which a hosted runner can install. Keeping
+  # this job hosted means a compile error does not wait behind the approval
+  # gate the integration job carries, and it holds the release pipeline to the
+  # same requirement: release.yml builds on hosted runners too, so a VM-capable
+  # release is possible only for as long as this job keeps passing.
   build:
     name: Build with the vm feature
-    runs-on: [self-hosted, macos, arm64]
-    environment: integration # requires maintainer approval before the job runs
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,6 +80,27 @@ jobs:
         with:
           toolchain: stable
           components: clippy
+
+      - name: Install libkrun
+        run: |
+          brew tap libkrun/krun
+          brew trust libkrun/krun
+          brew install libkrun/krun/libkrun pkgconf
+
+      # The tap publishes libkrunfw bottles for a fixed set of macOS versions.
+      # Off that set Homebrew builds from source, and building libkrunfw means
+      # compiling a Linux kernel — too slow and too brittle for this job or for
+      # a release. Fail plainly rather than quietly taking minutes.
+      - name: Require a bottled libkrunfw
+        run: |
+          installed=$(brew info --json=v2 libkrun/krun/libkrunfw | python3 -c \
+            'import json,sys; i=json.load(sys.stdin)["formulae"][0]["installed"][0]; print(i["version"], i["poured_from_bottle"])')
+          echo "libkrunfw $installed"
+          case "$installed" in
+            *True) ;;
+            *) echo "::error::libkrunfw was built from source rather than poured from a bottle — see the note at the top of this workflow"
+               exit 1 ;;
+          esac
 
       - name: Set build environment
         run: |
@@ -95,7 +117,7 @@ jobs:
           echo "DYLD_FALLBACK_LIBRARY_PATH=$LIBCLANG:$PREFIX/lib" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
 
-      # A self-hosted runner's setup drifts over time, so say plainly what is
+      # A runner image changes under us over time, so say plainly what is
       # missing rather than leaving it to a build-script error deep in cargo.
       - name: Check prerequisites
         run: |
