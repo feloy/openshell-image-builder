@@ -138,19 +138,17 @@ jobs:
       - name: Install podman
         run: sudo apt-get update && sudo apt-get install -y podman
 
+      # The tarball is what the release binary embeds, and it doubles as the
+      # artifact format: upload-artifact zips its input, which drops symlinks
+      # and the executable bit — both of which a bootable rootfs needs.
       - name: Build VM rootfs
-        run: ./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs
-
-      # upload-artifact zips its input, which drops symlinks and the executable
-      # bit — both of which a bootable rootfs needs. Tar it first.
-      - name: Archive rootfs
-        run: tar -czf vm-rootfs.tar.gz vm-rootfs/
+        run: ./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs ./vm-rootfs.tar
 
       - name: Upload rootfs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vm-rootfs
-          path: vm-rootfs.tar.gz
+          path: vm-rootfs.tar
 
   # The only job that actually boots a VM, so the only one needing bare metal.
   integration:
@@ -201,8 +199,19 @@ jobs:
             exit 1
           fi
 
+      - name: Download rootfs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vm-rootfs
+
+      # Embedded rather than passed with --vm-rootfs, so that this job proves
+      # what a released binary actually does: unpack its own rootfs and boot
+      # from it, with no rootfs on the machine to fall back on. The compile
+      # guard above builds without the variable and so covers the other path.
       - name: Build binary
         run: cargo build --release --features vm
+        env:
+          OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE: ${{ github.workspace }}/vm-rootfs.tar
 
       # Hypervisor.framework refuses a process whose signature lacks the
       # entitlement, so this is not optional — without it the VM never boots.
@@ -211,19 +220,10 @@ jobs:
           codesign --sign - --entitlements entitlements.plist --force \
             target/release/openshell-image-builder
 
-      - name: Download rootfs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: vm-rootfs
-
-      - name: Extract rootfs
-        run: tar -xzf vm-rootfs.tar.gz
-
       - name: Build an image in the VM
         run: |
           ./target/release/openshell-image-builder \
             --runtime vm \
-            --vm-rootfs ./vm-rootfs \
             --vm-output ./openshell-vm-test.tar \
             -v \
             openshell-vm-test:integration
@@ -240,6 +240,12 @@ jobs:
 
       # This runner is someone's own machine, and the exported rootfs is a few
       # hundred MB. Do not leave it lying around, even when the job fails.
+      # That includes the build rootfs the binary unpacked for itself, which
+      # nothing else on this machine will ever use again. Only that directory
+      # is removed, never the one above it, which is where a maintainer's own
+      # config.toml lives.
       - name: Clean up
         if: always()
-        run: rm -rf ./vm-rootfs ./vm-rootfs.tar.gz ./openshell-vm-test.tar "$RUNNER_TEMP/vm-rootfs-check"
+        run: |
+          rm -rf ./vm-rootfs.tar ./openshell-vm-test.tar "$RUNNER_TEMP/vm-rootfs-check"
+          rm -rf "$HOME/Library/Application Support/openshell-image-builder/vm-rootfs"

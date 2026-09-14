@@ -19,12 +19,17 @@
 # Requires Podman. The resulting rootfs has buildah installed and is
 # pre-configured to use the vfs storage driver (required on virtiofs).
 #
-# Usage: ./make-rootfs.sh [OUTPUT_DIR]
+# Usage: ./make-rootfs.sh [OUTPUT_DIR] [ARCHIVE]
 #   OUTPUT_DIR  where to write the rootfs  (default: ./vm-rootfs)
+#   ARCHIVE     also pack the rootfs into this tarball, which the build script
+#               embeds when OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE points at
+#               it. Left uncompressed: build.rs compresses what it embeds, and
+#               zstd is not part of a stock macOS.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOTFS="${1:-./vm-rootfs}"
+ARCHIVE_OUT="${2:-}"
 IMAGE="openshell-vm-rootfs"
 
 if ! command -v podman >/dev/null 2>&1; then
@@ -62,8 +67,27 @@ tar -C "$ROOTFS" -xf "$ARCHIVE"
 # use-vc forces TCP for DNS queries — TSI routes TCP but may not route UDP.
 printf 'nameserver 1.1.1.1\noptions use-vc\n' > "$ROOTFS/etc/resolv.conf"
 
+# Packed from the extracted tree rather than straight from `podman export`, so
+# that the archive holds exactly what an unprivileged `tar -x` could restore —
+# the extraction the binary performs on the user's machine cannot then fail on
+# something (a device node) it is not allowed to create. The tree sits at the
+# archive root, with no leading `vm-rootfs/` component.
+# COPYFILE_DISABLE stops macOS tar from storing extended attributes as extra
+# `._*` members.
+if [ -n "$ARCHIVE_OUT" ]; then
+    echo "Packing rootfs into $ARCHIVE_OUT..."
+    COPYFILE_DISABLE=1 tar -C "$ROOTFS" -cf "$ARCHIVE_OUT" .
+fi
+
 echo ""
 echo "Rootfs ready at: $ROOTFS"
+if [ -n "$ARCHIVE_OUT" ]; then
+    echo "Archive ready at: $ARCHIVE_OUT"
+    echo ""
+    echo "Embed it in the binary:"
+    echo "  OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE=$ARCHIVE_OUT \\"
+    echo "    cargo build --release --features vm"
+fi
 echo ""
 echo "Build an image with it:"
 echo "  openshell-image-builder --runtime vm --vm-rootfs $ROOTFS myimage:latest"

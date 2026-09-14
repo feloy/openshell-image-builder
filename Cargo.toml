@@ -49,6 +49,13 @@ toml = "0.8"
 ureq = "2"
 url = "2"
 vm-image-builder = { path = "crates/vm-image-builder" }
+zstd = "0.13"
+
+# build.rs compresses the VM rootfs tarball it embeds and records a digest of
+# it, which `src/vm_rootfs.rs` uses as the cache key for its extraction.
+[build-dependencies]
+sha2 = "0.10"
+zstd = "0.13"
 
 [dev-dependencies]
 ctor = "0.2"

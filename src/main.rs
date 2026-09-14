@@ -22,6 +22,7 @@ mod feature;
 mod host;
 mod inference;
 mod policy;
+mod vm_rootfs;
 mod workspace;
 
 use std::collections::HashMap;
@@ -151,8 +152,7 @@ struct Cli {
         long = "vm-rootfs",
         value_name = "DIR",
         help = "Root filesystem the build VM boots from (--runtime vm only). \
-                Defaults to 'vm-rootfs' next to the binary. Build one with \
-                crates/vm-image-builder/vm-image/make-rootfs.sh."
+                Defaults to the one embedded in this binary."
     )]
     vm_rootfs: Option<PathBuf>,
     #[arg(
@@ -258,24 +258,28 @@ fn check_vm_flags(cli: &Cli) -> Result<(), String> {
 /// Assembles the VM configuration, filling in the defaults for anything the
 /// user did not pass.
 ///
-/// The rootfs defaults to `vm-rootfs` beside the binary so that a distribution
-/// can ship the two together and work with no flags.
-fn vm_config(rootfs: Option<PathBuf>, cpus: Option<u8>, memory: Option<u32>) -> VmConfig {
-    let rootfs = rootfs.unwrap_or_else(default_vm_rootfs);
-    VmConfig {
+/// Without `--vm-rootfs` the VM boots from the rootfs embedded in this binary,
+/// unpacked on first use, so that `--runtime vm` needs nothing of the user
+/// beyond the binary itself.
+///
+/// # Errors
+///
+/// Returns the reason the embedded rootfs could not be made available, when
+/// the caller passed no rootfs of their own.
+fn vm_config(
+    rootfs: Option<PathBuf>,
+    cpus: Option<u8>,
+    memory: Option<u32>,
+) -> Result<VmConfig, String> {
+    let rootfs = match rootfs {
+        Some(rootfs) => rootfs,
+        None => vm_rootfs::ensure_extracted()?,
+    };
+    Ok(VmConfig {
         rootfs,
         cpus: cpus.unwrap_or(vm_image_builder::DEFAULT_CPUS),
         memory_mib: memory.unwrap_or(vm_image_builder::DEFAULT_MEMORY_MIB),
-    }
-}
-
-/// Returns `vm-rootfs` next to this binary, falling back to the current
-/// directory when the executable path cannot be determined.
-fn default_vm_rootfs() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("vm-rootfs")))
-        .unwrap_or_else(|| PathBuf::from("vm-rootfs"))
+    })
 }
 
 /// Derives the default tarball name for a VM build from the image tag.
@@ -311,15 +315,29 @@ fn select_runtime(cli: &Cli) -> Result<Selected, String> {
             Ok(Selected::Cli(container_cli))
         }
         None => {
-            let config = vm_config(cli.vm_rootfs.clone(), cli.vm_cpus, cli.vm_memory);
-            config.check_rootfs().map_err(|e| e.to_string())?;
-            let output = cli
-                .vm_output
-                .clone()
-                .unwrap_or_else(|| vm_output_path(&cli.tag));
-            Ok(Selected::Vm(config, output))
+            // Before the rootfs, which on a default run means unpacking the
+            // embedded one: an unsupported host, or a binary built without the
+            // `vm` feature, should not first cost 80 MiB of extraction.
+            KrunRunner.check_supported().map_err(|e| e.to_string())?;
+            select_vm(cli)
         }
     }
+}
+
+/// Resolves what `--runtime vm` builds through, once the host is known to be
+/// able to boot a VM at all.
+///
+/// Split out of [`select_runtime`] so that the resolution can be tested on a
+/// host — or a build — where [`KrunRunner`] reports itself unsupported, which
+/// is every machine that is not an Apple Silicon Mac with the `vm` feature on.
+fn select_vm(cli: &Cli) -> Result<Selected, String> {
+    let config = vm_config(cli.vm_rootfs.clone(), cli.vm_cpus, cli.vm_memory)?;
+    config.check_rootfs().map_err(|e| e.to_string())?;
+    let output = cli
+        .vm_output
+        .clone()
+        .unwrap_or_else(|| vm_output_path(&cli.tag));
+    Ok(Selected::Vm(config, output))
 }
 
 /// Borrows a [`Selected`] as the [`Backend`] that [`run`] builds through.
@@ -357,12 +375,6 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     if endpoint.is_some() && inference_kind == Some(inference::InferenceKind::VertexAi) {
         return Err("--endpoint is not supported for the vertexai inference provider".into());
-    }
-    // An unsupported host, or a binary built without the `vm` feature, is
-    // rejected here rather than from inside the runner, so `--runtime vm`
-    // fails before a whole build context has been staged.
-    if let Backend::Vm(_, runner, _) = backend {
-        runner.check_supported()?;
     }
     let config = config::load(config_path.clone())?;
     let workspace = if with_workspace_config {
@@ -1776,7 +1788,7 @@ mod tests {
 
     #[test]
     fn vm_config_uses_defaults_when_unset() {
-        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), None, None);
+        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), None, None).unwrap();
         assert_eq!(config.rootfs, PathBuf::from("/tmp/rootfs"));
         assert_eq!(config.cpus, vm_image_builder::DEFAULT_CPUS);
         assert_eq!(config.memory_mib, vm_image_builder::DEFAULT_MEMORY_MIB);
@@ -1784,19 +1796,24 @@ mod tests {
 
     #[test]
     fn vm_config_uses_the_given_resources() {
-        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), Some(8), Some(16384));
+        let config = vm_config(Some(PathBuf::from("/tmp/rootfs")), Some(8), Some(16384)).unwrap();
         assert_eq!(config.cpus, 8);
         assert_eq!(config.memory_mib, 16384);
     }
 
+    // Only the empty case is asserted here. Calling this on a binary that does
+    // embed a rootfs would unpack 80 MiB into the data directory of whoever
+    // ran the tests; the vm-runtime workflow covers that path by building an
+    // image with no --vm-rootfs at all. `vm_rootfs` covers the unpacking.
     #[test]
-    fn vm_config_defaults_the_rootfs_next_to_the_binary() {
-        let config = vm_config(None, None, None);
-        let rootfs = config.rootfs.display().to_string();
-        assert!(
-            config.rootfs.ends_with("vm-rootfs"),
-            "unexpected default rootfs: {rootfs}"
-        );
+    fn vm_config_without_a_rootfs_falls_back_to_the_embedded_one() {
+        if vm_rootfs::is_embedded() {
+            return;
+        }
+
+        let err = vm_config(None, None, None).expect_err("nothing is embedded to fall back to");
+
+        assert!(err.contains("--vm-rootfs"), "error was: {err}");
     }
 
     #[test]
@@ -1937,6 +1954,31 @@ mod tests {
 
     // select_runtime
 
+    // The gate in front of `select_vm`. Which way it goes depends on how this
+    // binary was built, and both directions are worth pinning: an unsupported
+    // build must refuse before unpacking a rootfs, and a `vm` build must not
+    // refuse a rootfs it was handed.
+    #[test]
+    fn select_runtime_vm_checks_vm_support_before_the_rootfs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = fake_vm_rootfs(tmp.path());
+        let cli = parse_cli(&[
+            "--runtime",
+            "vm",
+            "--vm-rootfs",
+            rootfs.to_str().unwrap(),
+            "myimage:latest",
+        ])
+        .unwrap();
+
+        let selected = select_runtime(&cli);
+
+        match KrunRunner.check_supported() {
+            Ok(()) => assert!(selected.is_ok(), "{:?}", selected.err()),
+            Err(unsupported) => assert_eq!(selected.err(), Some(unsupported.to_string())),
+        }
+    }
+
     #[test]
     fn select_runtime_vm_resolves_config_and_output() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1953,7 +1995,7 @@ mod tests {
             "myimage:latest",
         ])
         .unwrap();
-        let (config, output) = vm_parts(select_runtime(&cli).unwrap()).unwrap();
+        let (config, output) = vm_parts(select_vm(&cli).unwrap()).unwrap();
         assert_eq!(config.rootfs, rootfs);
         assert_eq!(config.cpus, 4);
         assert_eq!(config.memory_mib, 8192);
@@ -1976,7 +2018,7 @@ mod tests {
             "myimage:latest",
         ])
         .unwrap();
-        let (_, output) = vm_parts(select_runtime(&cli).unwrap()).unwrap();
+        let (_, output) = vm_parts(select_vm(&cli).unwrap()).unwrap();
         assert_eq!(output, out);
     }
 
@@ -1993,7 +2035,7 @@ mod tests {
         ])
         .unwrap();
         // `Selected` has no `Debug`, so `unwrap_err` is unavailable here.
-        let err = select_runtime(&cli).err().unwrap();
+        let err = select_vm(&cli).err().unwrap();
         assert!(
             err.contains("no-such-rootfs"),
             "error should name the rootfs: {err}"

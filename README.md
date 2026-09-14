@@ -89,7 +89,7 @@ tar -xf myimage-latest.tar -C /path/to/rootfs
 
 ### Requirements
 
-`--runtime vm` works only on **macOS with Apple Silicon**, because libkrun builds on Apple's Hypervisor.framework. It also needs all three of the following, and reports which one is missing if you run without them:
+`--runtime vm` works only on **macOS with Apple Silicon**, because libkrun builds on Apple's Hypervisor.framework. It also needs both of the following, and reports which one is missing if you run without them:
 
 1. **A binary built with the `vm` feature.** It is off by default, since enabling it links against libkrun:
 
@@ -108,13 +108,24 @@ tar -xf myimage-latest.tar -C /path/to/rootfs
      target/release/openshell-image-builder
    ```
 
-3. **A build rootfs.** The VM boots from a Linux filesystem with `buildah` installed. Build one with the provided script, which needs Podman on a `linux/arm64` machine:
+The VM's own root filesystem — a Linux tree with `buildah` in it — comes with the binary. A release build carries one and unpacks it on first use, into `~/Library/Application Support/openshell-image-builder/vm-rootfs`; later runs reuse it, and a build of a different version replaces it.
 
-   ```sh
-   ./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs
-   ```
+### Building the VM's root filesystem
 
-   Pass it with `--vm-rootfs`, or place it as `vm-rootfs` next to the binary and it is found automatically.
+Only needed to change what the build VM contains, or to embed one in a binary you build yourself. The script needs Podman on a `linux/arm64` machine, and writes the directory, the tarball, or both:
+
+```sh
+./crates/vm-image-builder/vm-image/make-rootfs.sh ./vm-rootfs ./vm-rootfs.tar
+```
+
+Run against it directly with `--vm-rootfs ./vm-rootfs`, which overrides the embedded one, or embed the tarball:
+
+```sh
+OPENSHELL_IMAGE_BUILDER_VM_ROOTFS_ARCHIVE=$PWD/vm-rootfs.tar \
+  cargo build --release --features vm
+```
+
+A build without that variable embeds nothing and says so on `--runtime vm`, which leaves `--vm-rootfs` as the only way to supply one.
 
 ### Sizing the VM
 
@@ -123,7 +134,6 @@ tar -xf myimage-latest.tar -C /path/to/rootfs
 ```sh
 openshell-image-builder \
   --runtime vm \
-  --vm-rootfs ./vm-rootfs \
   --vm-cpus 4 \
   --vm-memory 8192 \
   myimage:latest
@@ -641,7 +651,7 @@ openshell-image-builder [OPTIONS] <TAG>
 | `--with-agent-settings`        | Generate and include agent settings in the image (see [Agent settings](#agent-settings)) |
 | `--ssl-certs <FILE>`           | Use a specific CA bundle instead of the auto-discovered one (see [Corporate proxy support](#corporate-proxy-support---ssl-certs)). The build fails immediately if the file does not exist. |
 | `--disable-ssl-certs`          | Disable bundling CA certificates into the image. By default, the tool auto-discovers and includes system CA certificates. |
-| `--vm-rootfs <DIR>`            | Root filesystem the build VM boots from (`--runtime vm` only). Defaults to `vm-rootfs` next to the binary. |
+| `--vm-rootfs <DIR>`            | Root filesystem the build VM boots from (`--runtime vm` only). Defaults to the one embedded in the binary. |
 | `--vm-output <FILE>`           | Path for the rootfs tarball produced by `--runtime vm`. Defaults to a name derived from `<TAG>` in the current directory. |
 | `--vm-cpus <N>`                | vCPUs given to the build VM (`--runtime vm` only). Default `2`.     |
 | `--vm-memory <MIB>`            | RAM in MiB given to the build VM (`--runtime vm` only). Default `4096`. |
