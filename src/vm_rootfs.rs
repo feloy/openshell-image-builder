@@ -48,6 +48,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// the staging directory, so it can only describe a complete extraction.
 const MARKER: &str = ".rootfs-archive";
 
+/// Prefix of a directory still being unpacked into. The version and the pid
+/// complete it, so two processes unpacking at once cannot collide, and
+/// [`sweep_old_versions`] can tell a staging directory from an installed one.
+const STAGING_PREFIX: &str = ".staging-";
+
 /// Reported when the binary was built without an embedded rootfs.
 ///
 /// Whoever reads this is running the binary, not building it — a release build
@@ -108,10 +113,19 @@ fn install(archive: &[u8], digest: &str, root: &Path) -> Result<PathBuf, String>
         return Ok(dir);
     }
 
-    let staging = root.join(format!(".staging-{VERSION}-{}", std::process::id()));
+    let staging = root.join(format!("{STAGING_PREFIX}{VERSION}-{}", std::process::id()));
     if let Err(err) = stage(archive, &key, &staging) {
         let _ = fs::remove_dir_all(&staging);
         return Err(err);
+    }
+
+    // Another process may have installed this same rootfs while we were
+    // unpacking. Its tree came from the archive ours did and it may already be
+    // booting a VM from it, so keep it and drop our copy — swapping an
+    // identical tree in underneath a live VM gains nothing and can break it.
+    if marker_matches(&dir, &key) && VmConfig::new(&dir).check_rootfs().is_ok() {
+        let _ = fs::remove_dir_all(&staging);
+        return Ok(dir);
     }
 
     if dir.exists()
@@ -175,15 +189,28 @@ fn marker_matches(dir: &Path, key: &str) -> bool {
 /// ignored: another process may be booting a VM from one right now, and a
 /// rootfs that could not be swept is not a reason to fail the build the user
 /// asked for.
+///
+/// A directory still being unpacked into is left alone. It belongs to whichever
+/// process is writing it — the pid in its name says which — and removing one
+/// would fail that process's extraction rather than reclaim anything: it is
+/// about to become an installed rootfs or be cleaned up by its owner.
 fn sweep_old_versions(root: &Path, current: &Path) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path != current && path.is_dir() {
-            let _ = fs::remove_dir_all(path);
+        if path == current || !path.is_dir() {
+            continue;
         }
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(STAGING_PREFIX)
+        {
+            continue;
+        }
+        let _ = fs::remove_dir_all(path);
     }
 }
 
@@ -324,6 +351,27 @@ mod tests {
         install(&archive, &digest_of(&archive), root.path()).expect("install");
 
         assert!(!stale.exists(), "an older version should be swept");
+    }
+
+    #[test]
+    fn install_leaves_another_process_staging_directory_alone() {
+        let root = TempDir::new().expect("temp dir");
+        // Named for a pid that is not ours, as a concurrent first-ever build
+        // unpacking into the same cache would be. Sweeping it would fail that
+        // build's extraction rather than reclaim anything.
+        let staging = root.path().join(format!(
+            "{STAGING_PREFIX}{VERSION}-{}",
+            std::process::id() + 1
+        ));
+        fs::create_dir_all(&staging).expect("create a staging directory");
+        let archive = archive_with("#!/bin/sh\n");
+
+        install(&archive, &digest_of(&archive), root.path()).expect("install");
+
+        assert!(
+            staging.exists(),
+            "a staging directory in flight should not be swept"
+        );
     }
 
     #[test]
